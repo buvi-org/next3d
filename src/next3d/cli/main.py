@@ -399,3 +399,117 @@ def embeddings(step_file: str, output: str | None):
                       f"Feature dim: {tensors['feature_dim']}")
     else:
         click.echo(result)
+
+
+@cli.command()
+@click.argument("step_file")
+@click.option("--format", "fmt", type=click.Choice(["json", "table", "yaml"]), default="table")
+def metadata(step_file: str, fmt: str):
+    """Extract STEP file metadata (header, products, entity stats)."""
+    from next3d.core.step_metadata import extract_metadata
+
+    path = Path(step_file)
+    if not path.exists():
+        console.print(f"[red]File not found:[/red] {path}")
+        sys.exit(1)
+
+    meta = extract_metadata(path)
+
+    if fmt in ("json", "yaml"):
+        click.echo(_format_output(meta.to_dict(), fmt))
+        return
+
+    console.print(f"\n[bold]STEP Metadata: {step_file}[/bold]\n")
+
+    # Header
+    h = meta.header
+    ht = Table(title="File Header")
+    ht.add_column("Field", style="cyan")
+    ht.add_column("Value")
+    ht.add_row("Schema", h.schema or "(unknown)")
+    ht.add_row("AP Version", h.ap_version or "(unknown)")
+    ht.add_row("Originating System", h.originating_system or "(unknown)")
+    ht.add_row("Preprocessor", h.preprocessor or "(unknown)")
+    ht.add_row("Description", h.description or "(none)")
+    ht.add_row("Author", h.author or "(unknown)")
+    console.print(ht)
+
+    # Products
+    if meta.products:
+        pt = Table(title="Products")
+        pt.add_column("ID", style="dim")
+        pt.add_column("Name", style="yellow")
+        pt.add_column("Description")
+        for p in meta.products:
+            pt.add_row(p.product_id, p.name, p.description)
+        console.print(pt)
+
+    # Entity stats
+    console.print(f"\nTotal STEP entities: [bold]{meta.total_entities}[/bold]")
+
+    et = Table(title="Top Entity Types")
+    et.add_column("Type", style="cyan")
+    et.add_column("Count", style="green", justify="right")
+    for t, c in sorted(meta.entity_counts.items(), key=lambda x: -x[1])[:15]:
+        et.add_row(t, str(c))
+    console.print(et)
+
+    # Capabilities
+    caps = []
+    if meta.has_pmi:
+        caps.append("PMI/GD&T")
+    if meta.has_colors:
+        caps.append("Colors")
+    if meta.has_layers:
+        caps.append("Layers")
+    if meta.has_assembly:
+        caps.append("Assembly structure")
+    if caps:
+        console.print(f"\nDetected capabilities: {', '.join(caps)}")
+    else:
+        console.print("\n[dim]No extended capabilities (basic B-Rep only)[/dim]")
+
+
+@cli.command()
+@click.argument("step_file")
+@click.option("--format", "fmt", type=click.Choice(["json", "table", "yaml"]), default="table")
+def mating(step_file: str, fmt: str):
+    """Analyze potential mating conditions between features."""
+    from next3d.core.assembly import detect_mating_conditions
+
+    g = _load_graph(step_file)
+    conditions = detect_mating_conditions(g)
+
+    if fmt in ("json", "yaml"):
+        data = [
+            {
+                "source_id": c.source_id,
+                "target_id": c.target_id,
+                "mate_type": c.mate_type,
+                "parameters": c.parameters,
+                "description": c.description,
+            }
+            for c in conditions
+        ]
+        click.echo(_format_output(data, fmt))
+        return
+
+    if not conditions:
+        console.print("[dim]No mating conditions detected.[/dim]")
+        return
+
+    console.print(f"\n[bold]Mating Analysis: {step_file}[/bold]\n")
+
+    table = Table(title="Mating Conditions")
+    table.add_column("Type", style="yellow")
+    table.add_column("Source", style="dim")
+    table.add_column("Target", style="dim")
+    table.add_column("Description")
+    for c in conditions:
+        table.add_row(
+            c.mate_type,
+            c.source_id[:16] + "...",
+            c.target_id[:16] + "...",
+            c.description,
+        )
+    console.print(table)

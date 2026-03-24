@@ -74,6 +74,12 @@ class HoleRecognizer:
             adjacent_ids = adj_lookup.get(face.persistent_id, [])
             adjacent_faces = [face_lookup[fid] for fid in adjacent_ids if fid in face_lookup]
 
+            # Skip fillet-like cylinders: small cylinder sandwiched between
+            # two larger faces (characteristic of edge blends, not holes)
+            larger_neighbors = [af for af in adjacent_faces if af.area > face.area * 2]
+            if len(larger_neighbors) >= 2 and len(circular_edges) == 0:
+                continue  # likely a fillet, not a hole
+
             # Through hole: cylindrical face with 2 circular edges, all neighbors are non-cylindrical
             if len(circular_edges) >= 2:
                 fid = feature_id(FeatureType.THROUGH_HOLE.value, [face.persistent_id])
