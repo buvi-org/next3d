@@ -64,6 +64,11 @@ _CURVE_TYPE_MAP = {
 }
 
 
+def _shape_key(shape: TopoDS_Shape) -> int:
+    """Get a deduplication key for an OCP shape using Python's hash()."""
+    return hash(shape)
+
+
 # ---------------------------------------------------------------------------
 # Extraction helpers
 # ---------------------------------------------------------------------------
@@ -159,7 +164,7 @@ def build_topology_graph(
     """
     graph = nx.DiGraph()
 
-    # Deduplicate by OpenCascade shape hash
+    # Deduplicate by OCP shape hash
     seen_vertices: dict[int, VertexData] = {}
     seen_edges: dict[int, EdgeData] = {}
     seen_faces: dict[int, FaceData] = {}
@@ -168,7 +173,7 @@ def build_topology_graph(
     vexp = TopExp_Explorer(shape, TopAbs_VERTEX)
     while vexp.More():
         v = vexp.Current()
-        key = v.HashCode(2**31 - 1)
+        key = _shape_key(v)
         if key not in seen_vertices:
             pt = _vertex_point(v)
             pid = vertex_id(pt.x, pt.y, pt.z)
@@ -181,7 +186,7 @@ def build_topology_graph(
     eexp = TopExp_Explorer(shape, TopAbs_EDGE)
     while eexp.More():
         e = eexp.Current()
-        key = e.HashCode(2**31 - 1)
+        key = _shape_key(e)
         if key not in seen_edges:
             ctype, cparams = _classify_curve(e)
             length = _edge_length(e)
@@ -218,7 +223,7 @@ def build_topology_graph(
     fexp = TopExp_Explorer(shape, TopAbs_FACE)
     while fexp.More():
         f = fexp.Current()
-        key = f.HashCode(2**31 - 1)
+        key = _shape_key(f)
         if key not in seen_faces:
             stype, sparams = _classify_surface(f)
             centroid, area = _face_centroid_and_area(f)
@@ -228,7 +233,7 @@ def build_topology_graph(
             bound_edge_ids = []
             edge_exp = TopExp_Explorer(f, TopAbs_EDGE)
             while edge_exp.More():
-                ekey = edge_exp.Current().HashCode(2**31 - 1)
+                ekey = _shape_key(edge_exp.Current())
                 if ekey in seen_edges:
                     bound_edge_ids.append(seen_edges[ekey].persistent_id)
                 edge_exp.Next()
@@ -258,18 +263,15 @@ def build_topology_graph(
         edge_shape = adjacency_map.FindKey(i)
         face_list = adjacency_map.FindFromIndex(i)
 
-        ekey = edge_shape.HashCode(2**31 - 1)
+        ekey = _shape_key(edge_shape)
         shared_eid = seen_edges[ekey].persistent_id if ekey in seen_edges else None
 
+        # Iterate the face list using Python iteration
         face_ids = []
-        it = face_list.begin()
-        while it != face_list.end():
-            fkey = it.HashCode(2**31 - 1)
+        for face_shape in face_list:
+            fkey = _shape_key(face_shape)
             if fkey in seen_faces:
                 face_ids.append(seen_faces[fkey].persistent_id)
-            it = it.Next() if hasattr(it, "Next") else None
-            if it is None:
-                break
 
         # Create adjacency edges for each pair of faces sharing this edge
         for j in range(len(face_ids)):

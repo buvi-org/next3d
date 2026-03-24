@@ -6,10 +6,9 @@ build-backend = "hatchling.build"
 name = "next3d"
 version = "0.1.0"
 description = "Semantic 3D geometry cognition system — structured, queryable, AI-native CAD understanding"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "OCP-stubs>=7.7",
     "cadquery>=2.4",
     "networkx>=3.2",
     "pydantic>=2.5",

@@ -12,6 +12,7 @@ from next3d.core.brep import load_step
 from next3d.core.identity import solid_id
 from next3d.core.schema import SemanticGraph, SolidData, Vec3
 from next3d.core.topology import build_topology_graph
+import next3d.features  # noqa: F401 — triggers recognizer registration
 from next3d.features.engine import recognize_all
 
 from OCP.BRepGProp import BRepGProp
