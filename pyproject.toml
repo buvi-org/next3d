@@ -14,6 +14,7 @@ dependencies = [
     "pydantic>=2.5",
     "click>=8.1",
     "rich>=13.0",
+    "mcp>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -25,6 +26,7 @@ dev = [
 
 [project.scripts]
 next3d = "next3d.cli.main:cli"
+next3d-mcp = "next3d.mcp:run_server"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/next3d"]

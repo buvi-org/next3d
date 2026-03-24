@@ -9,6 +9,10 @@ Commands:
     next3d properties <file.step>  — Physical properties (mass, CoG, inertia)
     next3d manufacturing <file.step> — Manufacturing analysis
     next3d embeddings <file.step>  — Graph embedding export for ML
+    next3d serve                   — Start MCP server for AI agents
+    next3d tools                   — Export tool schemas (OpenAI/MCP/Anthropic)
+    next3d call <tool> <json>      — Execute a single tool call
+    next3d build <json> -o <file>  — Execute tool pipeline, export STEP
 """
 
 from __future__ import annotations
@@ -622,3 +626,23 @@ def build(script: tuple[str, ...], output: str, export_script: str | None):
         if script_result.success:
             Path(export_script).write_text(script_result.data.get("script", ""))
             console.print(f"[green]CadQuery script written to {export_script}[/green]")
+
+
+@cli.command()
+@click.option(
+    "--transport", type=click.Choice(["stdio", "sse"]), default="stdio",
+    help="Transport protocol. stdio for Claude Code/Desktop, sse for web clients.",
+)
+def serve(transport: str):
+    """Start the MCP server for AI agents.
+
+    Exposes 22 modeling tools over MCP protocol.
+
+    Usage with Claude Code:
+        claude mcp add next3d -- next3d serve
+
+    Usage with Claude Desktop (claude_desktop_config.json):
+        {"mcpServers": {"next3d": {"command": "next3d", "args": ["serve"]}}}
+    """
+    from next3d.mcp import run_server
+    run_server(transport=transport)
