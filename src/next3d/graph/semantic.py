@@ -10,6 +10,7 @@ from pathlib import Path
 
 from next3d.core.brep import load_step
 from next3d.core.identity import solid_id
+from next3d.core.relationships import detect_all_relationships
 from next3d.core.schema import SemanticGraph, SolidData, Vec3
 from next3d.core.topology import build_topology_graph
 import next3d.features  # noqa: F401 — triggers recognizer registration
@@ -70,6 +71,9 @@ def build_semantic_graph(step_path: str | Path) -> SemanticGraph:
     # Recognize features
     features = recognize_all(faces, edges, adjacency)
 
+    # Detect geometric relationships
+    relationships = detect_all_relationships(faces, adjacency)
+
     return SemanticGraph(
         solids=solids,
         faces=faces,
@@ -77,5 +81,5 @@ def build_semantic_graph(step_path: str | Path) -> SemanticGraph:
         vertices=vertices,
         features=features,
         adjacency=adjacency,
-        relationships=[],  # Phase 2
+        relationships=relationships,
     )

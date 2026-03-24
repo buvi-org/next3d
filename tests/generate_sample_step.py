@@ -1,27 +1,107 @@
-"""Generate a sample STEP file for testing: a block with holes and fillets.
+"""Generate sample STEP files for testing.
 
-Run this script once to create tests/fixtures/sample_block.step
+Run: python tests/generate_sample_step.py
+
+Creates:
+- sample_block.step      — Block with 2 through holes + fillets
+- sample_chamfer.step    — Block with chamfered edges
+- sample_boss.step       — Plate with cylindrical boss protrusions
+- sample_slot.step       — Block with a slot cut
+- sample_complex.step    — Combined: holes, fillets, chamfers, boss
 """
 
 from pathlib import Path
 import cadquery as cq
 
-# A 100x60x20 block with:
-# - 2 through holes (diameter 10mm)
-# - Fillets on top edges (radius 2mm)
-result = (
-    cq.Workplane("XY")
-    .box(100, 60, 20)
-    .faces(">Z")
-    .workplane()
-    .pushPoints([(20, 0), (-20, 0)])
-    .hole(10)
-    .edges("|Z")
-    .fillet(2)
-)
-
 fixtures_dir = Path(__file__).parent / "fixtures"
 fixtures_dir.mkdir(exist_ok=True)
-output = fixtures_dir / "sample_block.step"
-cq.exporters.export(result, str(output))
-print(f"Written: {output}")
+
+
+def make_block_with_holes():
+    """100x60x20 block, 2 through holes (d=10), fillets on vertical edges (r=2)."""
+    return (
+        cq.Workplane("XY")
+        .box(100, 60, 20)
+        .faces(">Z")
+        .workplane()
+        .pushPoints([(20, 0), (-20, 0)])
+        .hole(10)
+        .edges("|Z")
+        .fillet(2)
+    )
+
+
+def make_chamfered_block():
+    """80x50x25 block with chamfered top edges (2mm)."""
+    return (
+        cq.Workplane("XY")
+        .box(80, 50, 25)
+        .edges(">Z")
+        .chamfer(2)
+    )
+
+
+def make_boss_plate():
+    """120x80x10 plate with two cylindrical bosses (d=15, h=20) on top."""
+    return (
+        cq.Workplane("XY")
+        .box(120, 80, 10)
+        .faces(">Z")
+        .workplane()
+        .pushPoints([(30, 0), (-30, 0)])
+        .circle(7.5)
+        .extrude(20)
+    )
+
+
+def make_slot_block():
+    """100x60x30 block with a slot cut (width=12, depth=15) along X axis."""
+    return (
+        cq.Workplane("XY")
+        .box(100, 60, 30)
+        .faces(">Z")
+        .workplane()
+        .slot2D(60, 12, 0)
+        .cutBlind(-15)
+    )
+
+
+def make_complex_part():
+    """A part combining: holes, fillets, chamfers, and boss."""
+    result = (
+        cq.Workplane("XY")
+        .box(100, 80, 25)
+        # Through holes
+        .faces(">Z")
+        .workplane()
+        .pushPoints([(30, 20), (-30, 20), (30, -20), (-30, -20)])
+        .hole(8)
+        # Boss on top
+        .faces(">Z")
+        .workplane()
+        .center(0, 0)
+        .circle(10)
+        .extrude(15)
+        # Fillets on boss top edges
+        .edges(">Z")
+        .fillet(1)
+        # Chamfer on base bottom edges
+        .edges("<Z")
+        .chamfer(1.5)
+    )
+    return result
+
+
+parts = {
+    "sample_block": make_block_with_holes,
+    "sample_chamfer": make_chamfered_block,
+    "sample_boss": make_boss_plate,
+    "sample_slot": make_slot_block,
+    "sample_complex": make_complex_part,
+}
+
+for name, factory in parts.items():
+    result = factory()
+    output = fixtures_dir / f"{name}.step"
+    cq.exporters.export(result, str(output))
+    print(f"Written: {output}")
