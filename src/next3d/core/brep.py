@@ -9,8 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from OCP.STEPControl import STEPControl_Reader
+from OCP.STEPControl import STEPControl_Reader, STEPControl_Writer, STEPControl_AsIs
 from OCP.IFSelect import IFSelect_RetDone
+from OCP.Interface import Interface_Static
 from OCP.TopoDS import TopoDS_Shape
 
 
@@ -60,3 +61,22 @@ def load_step(path: str | Path) -> BRepModel:
         raise STEPLoadError(f"STEP file contains no geometry: {path}")
 
     return BRepModel(shape=shape, source_path=path)
+
+
+def save_step(shape: TopoDS_Shape, path: str | Path) -> None:
+    """Export a shape to a STEP file.
+
+    Args:
+        shape: OpenCascade shape to export.
+        path: Output STEP file path.
+
+    Raises:
+        STEPLoadError: If writing fails.
+    """
+    path = Path(path)
+    writer = STEPControl_Writer()
+    Interface_Static.SetCVal_s("write.step.schema", "AP214")
+    writer.Transfer(shape, STEPControl_AsIs)
+    status = writer.Write(str(path))
+    if status != 1:
+        raise STEPLoadError(f"Failed to write STEP file: {path}")

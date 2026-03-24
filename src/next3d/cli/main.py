@@ -529,3 +529,96 @@ def mating(step_file: str, fmt: str):
             c.description,
         )
     console.print(table)
+
+
+@cli.command()
+@click.option("--format", "fmt", type=click.Choice(["openai", "mcp", "anthropic"]), default="openai")
+def tools(fmt: str):
+    """Export tool schemas for AI agent integration.
+
+    Outputs tool definitions in OpenAI, MCP, or Anthropic format.
+    Pipe this into your AI agent's tool configuration.
+    """
+    from next3d.tools.formats import to_json as tools_to_json
+    click.echo(tools_to_json(fmt))
+
+
+@cli.command()
+@click.argument("tool_name")
+@click.argument("params_json")
+@click.option("--session-file", type=click.Path(), help="Load session state from STEP file first")
+def call(tool_name: str, params_json: str, session_file: str | None):
+    """Execute a single tool call (for scripting / AI agent piping).
+
+    Example: next3d call create_box '{"length":100,"width":60,"height":20}'
+    """
+    from next3d.tools.executor import ToolExecutor
+
+    executor = ToolExecutor()
+    if session_file:
+        executor.call("load_step", {"path": session_file})
+
+    try:
+        params = json.loads(params_json)
+    except json.JSONDecodeError as e:
+        console.print(f"[red]Invalid JSON:[/red] {e}")
+        sys.exit(1)
+
+    result = executor.call(tool_name, params)
+    click.echo(json.dumps(result.to_dict(), indent=2))
+    if not result.success:
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument("script", nargs=-1, required=True)
+@click.option("--output", "-o", type=click.Path(), required=True, help="Output STEP file")
+@click.option("--export-script", type=click.Path(), help="Also export CadQuery Python script")
+def build(script: tuple[str, ...], output: str, export_script: str | None):
+    """Execute a sequence of tool calls from JSON and export STEP.
+
+    Each argument is a JSON object: {"tool": "create_box", "params": {...}}
+    Or pass a single JSON array.
+
+    Example:
+        next3d build '[{"tool":"create_box","params":{"length":100,"width":60,"height":20}},
+                       {"tool":"add_hole","params":{"center_x":0,"center_y":0,"diameter":10}}]' -o part.step
+    """
+    from next3d.tools.executor import ToolExecutor
+
+    executor = ToolExecutor()
+
+    raw = " ".join(script)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        console.print(f"[red]Invalid JSON:[/red] {e}")
+        sys.exit(1)
+
+    if isinstance(parsed, dict):
+        parsed = [parsed]
+
+    for i, step in enumerate(parsed):
+        tool_name = step.get("tool")
+        params = step.get("params", {})
+        if not tool_name:
+            console.print(f"[red]Step {i}: missing 'tool' key[/red]")
+            sys.exit(1)
+        result = executor.call(tool_name, params)
+        if not result.success:
+            console.print(f"[red]Step {i} ({tool_name}) failed:[/red] {result.message}")
+            sys.exit(1)
+        console.print(f"  [{i+1}] {result.message}")
+
+    result = executor.call("export_step", {"output_path": output})
+    if result.success:
+        console.print(f"\n[green]Exported to {output}[/green]")
+    else:
+        console.print(f"[red]Export failed:[/red] {result.message}")
+        sys.exit(1)
+
+    if export_script:
+        script_result = executor.call("export_script", {})
+        if script_result.success:
+            Path(export_script).write_text(script_result.data.get("script", ""))
+            console.print(f"[green]CadQuery script written to {export_script}[/green]")
