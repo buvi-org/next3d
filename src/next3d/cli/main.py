@@ -155,12 +155,28 @@ def inspect(step_file: str, fmt: str):
 
 @cli.command()
 @click.argument("step_file")
-@click.option("--mode", type=click.Choice(["summary", "detail"]), default="detail")
+@click.option("--mode", type=click.Choice(["summary", "detail", "stream"]), default="detail")
 @click.option("--output", "-o", type=click.Path(), help="Write to file instead of stdout")
 @click.option("--format", "fmt", type=click.Choice(["json", "yaml"]), default="json")
 def graph(step_file: str, mode: str, output: str | None, fmt: str):
-    """Export semantic graph as JSON."""
+    """Export semantic graph as JSON.
+
+    Modes: summary (compact), detail (full), stream (NDJSON line-by-line).
+    """
     g = _load_graph(step_file)
+
+    if mode == "stream":
+        from next3d.ai.streaming import stream_semantic_graph
+        if output:
+            with open(output, "w") as f:
+                for line in stream_semantic_graph(g):
+                    f.write(line + "\n")
+            console.print(f"[green]Streamed to {output}[/green]")
+        else:
+            for line in stream_semantic_graph(g):
+                click.echo(line)
+        return
+
     if fmt == "json":
         result = to_json(g, mode=mode)
     else:
