@@ -45,28 +45,30 @@ AI Agent Interface (JSON / Graph embeddings)
 
 ## Phasing
 
-### Phase 1 — MVP (Current)
+### Phase 1 — MVP
 - [x] Project structure and configuration
-- [ ] STEP file parsing via OpenCascade B-Rep kernel
-- [ ] Topology graph construction (Face/Edge/Vertex nodes, adjacency edges)
-- [ ] Persistent identity system (stable IDs across transforms)
-- [ ] Basic feature recognition (holes, fillets, chamfers, planar faces)
-- [ ] Semantic graph assembly (3D DOM)
-- [ ] Query DSL for geometry selection
-- [ ] JSON export for LLM consumption
-- [ ] CLI tool (`next3d inspect part.step`)
+- [x] STEP file parsing via OpenCascade B-Rep kernel
+- [x] Topology graph construction (Face/Edge/Vertex nodes, adjacency edges)
+- [x] Persistent identity system (stable IDs across transforms)
+- [x] Basic feature recognition (holes, fillets, chamfers, slots, bosses, counterbores)
+- [x] Semantic graph assembly (3D DOM)
+- [x] Query DSL for geometry selection
+- [x] JSON export for LLM consumption
+- [x] CLI tool (`next3d inspect part.step`)
 
 ### Phase 2 — Relationships & Reasoning
-- [ ] Constraint/relationship engine (parallel, concentric, tangent, offset)
-- [ ] Spatial reasoning (inside/outside, intersections, clearance)
-- [ ] Multi-scale representation (Solid → Feature → Face → Edge → Vertex)
-- [ ] Graph embedding export for GNN/ML models
+- [x] Constraint/relationship engine (parallel, concentric, tangent, offset)
+- [x] Spatial reasoning (inside/outside, intersections, clearance)
+- [x] Multi-scale representation (Solid → Feature → Face → Edge → Vertex)
+- [x] Graph embedding export for GNN/ML models
+- [x] Inter-feature relationships (symmetric, pattern_member)
 
 ### Phase 3 — Manufacturing & Assembly Intelligence
-- [ ] Manufacturing semantics (machinability, axis count, thread standards)
-- [ ] Assembly mating logic and fit analysis
+- [x] Manufacturing semantics (machinability, axis count, process suggestions)
+- [x] Assembly mating logic and fit analysis
 - [ ] Parametric/procedural history extraction (when available in STEP)
-- [ ] Physical properties (mass, CoG, moments of inertia)
+- [x] Physical properties (mass, CoG, moments of inertia)
+- [x] Multi-body STEP support (proper solid-to-face mapping)
 
 ---
 

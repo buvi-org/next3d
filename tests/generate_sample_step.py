@@ -8,6 +8,9 @@ Creates:
 - sample_boss.step       — Plate with cylindrical boss protrusions
 - sample_slot.step       — Block with a slot cut
 - sample_complex.step    — Combined: holes, fillets, chamfers, boss
+- sample_counterbore.step — Plate with counterbored holes
+- sample_multibody.step  — Two separate solids in one file
+- sample_pattern.step    — Block with a linear pattern of holes
 """
 
 from pathlib import Path
@@ -92,12 +95,45 @@ def make_complex_part():
     return result
 
 
+def make_counterbore():
+    """Plate with a counterbored hole: d=6 through hole + d=12 x 5mm deep counterbore."""
+    return (
+        cq.Workplane("XY")
+        .box(60, 60, 20)
+        .faces(">Z")
+        .workplane()
+        .cboreHole(6, 12, 5)
+    )
+
+
+def make_multibody():
+    """Two separate blocks as a compound (multi-body STEP)."""
+    block1 = cq.Workplane("XY").box(40, 30, 20)
+    block2 = cq.Workplane("XY").center(80, 0).box(40, 30, 20)
+    return block1.add(block2)
+
+
+def make_pattern():
+    """Block with a linear pattern of 4 evenly spaced through holes along X."""
+    return (
+        cq.Workplane("XY")
+        .box(120, 40, 15)
+        .faces(">Z")
+        .workplane()
+        .pushPoints([(-45, 0), (-15, 0), (15, 0), (45, 0)])
+        .hole(8)
+    )
+
+
 parts = {
     "sample_block": make_block_with_holes,
     "sample_chamfer": make_chamfered_block,
     "sample_boss": make_boss_plate,
     "sample_slot": make_slot_block,
     "sample_complex": make_complex_part,
+    "sample_counterbore": make_counterbore,
+    "sample_multibody": make_multibody,
+    "sample_pattern": make_pattern,
 }
 
 for name, factory in parts.items():

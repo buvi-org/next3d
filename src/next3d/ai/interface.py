@@ -50,7 +50,17 @@ def to_summary(graph: SemanticGraph) -> dict[str, Any]:
             for f in graph.features
         ],
         "face_type_distribution": _face_type_distribution(graph),
+        "relationships": _relationship_summary(graph),
     }
+
+
+def _relationship_summary(graph: SemanticGraph) -> dict[str, int]:
+    """Count relationships by type."""
+    dist: dict[str, int] = {}
+    for rel in graph.relationships:
+        key = rel.relationship_type.value
+        dist[key] = dist.get(key, 0) + 1
+    return dist
 
 
 def to_detail(graph: SemanticGraph) -> dict[str, Any]:

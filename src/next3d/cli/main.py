@@ -6,6 +6,9 @@ Commands:
     next3d query <file.step> "..." — Run DSL query, print results
     next3d features <file.step>    — List recognized features
     next3d validate <file.step>    — Check file integrity
+    next3d properties <file.step>  — Physical properties (mass, CoG, inertia)
+    next3d manufacturing <file.step> — Manufacturing analysis
+    next3d embeddings <file.step>  — Graph embedding export for ML
 """
 
 from __future__ import annotations
@@ -38,6 +41,50 @@ def _load_graph(step_file: str):
         sys.exit(1)
 
 
+def _format_output(data: dict | list, fmt: str) -> str:
+    """Format output data as json, table, or yaml."""
+    if fmt == "json":
+        return json.dumps(data, indent=2)
+    elif fmt == "yaml":
+        # Simple YAML-like output without requiring pyyaml
+        return _dict_to_yaml(data)
+    else:
+        return json.dumps(data, indent=2)
+
+
+def _dict_to_yaml(obj, indent: int = 0) -> str:
+    """Minimal YAML serializer (no external dependency)."""
+    lines: list[str] = []
+    prefix = "  " * indent
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if isinstance(v, (dict, list)) and v:
+                lines.append(f"{prefix}{k}:")
+                lines.append(_dict_to_yaml(v, indent + 1))
+            else:
+                lines.append(f"{prefix}{k}: {_yaml_value(v)}")
+    elif isinstance(obj, list):
+        for item in obj:
+            if isinstance(item, dict):
+                lines.append(f"{prefix}-")
+                lines.append(_dict_to_yaml(item, indent + 1))
+            else:
+                lines.append(f"{prefix}- {_yaml_value(item)}")
+    else:
+        lines.append(f"{prefix}{_yaml_value(obj)}")
+    return "\n".join(lines)
+
+
+def _yaml_value(v) -> str:
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, str):
+        return f'"{v}"' if any(c in v for c in ":#{}[]&*!|>'\"%@`") else v
+    return str(v)
+
+
 @click.group()
 @click.version_option(package_name="next3d")
 def cli():
@@ -46,10 +93,15 @@ def cli():
 
 @cli.command()
 @click.argument("step_file")
-def inspect(step_file: str):
+@click.option("--format", "fmt", type=click.Choice(["json", "table", "yaml"]), default="table")
+def inspect(step_file: str, fmt: str):
     """Print a semantic summary of a STEP file."""
     graph = _load_graph(step_file)
     summary = to_summary(graph)
+
+    if fmt in ("json", "yaml"):
+        click.echo(_format_output(summary, fmt))
+        return
 
     console.print(f"\n[bold]Next3D Inspection: {step_file}[/bold]\n")
 
@@ -88,15 +140,33 @@ def inspect(step_file: str):
     else:
         console.print("[dim]No features recognized.[/dim]")
 
+    # Relationships
+    if summary.get("relationships"):
+        rt = Table(title="Relationships")
+        rt.add_column("Type", style="yellow")
+        rt.add_column("Count", style="green", justify="right")
+        rel_counts: dict[str, int] = {}
+        for r in graph.relationships:
+            rel_counts[r.relationship_type.value] = rel_counts.get(r.relationship_type.value, 0) + 1
+        for rtype, count in sorted(rel_counts.items()):
+            rt.add_row(rtype, str(count))
+        console.print(rt)
+
 
 @cli.command()
 @click.argument("step_file")
 @click.option("--mode", type=click.Choice(["summary", "detail"]), default="detail")
 @click.option("--output", "-o", type=click.Path(), help="Write to file instead of stdout")
-def graph(step_file: str, mode: str, output: str | None):
+@click.option("--format", "fmt", type=click.Choice(["json", "yaml"]), default="json")
+def graph(step_file: str, mode: str, output: str | None, fmt: str):
     """Export semantic graph as JSON."""
     g = _load_graph(step_file)
-    result = to_json(g, mode=mode)
+    if fmt == "json":
+        result = to_json(g, mode=mode)
+    else:
+        from next3d.ai.interface import to_summary as _sum, to_detail as _det
+        data = _sum(g) if mode == "summary" else _det(g)
+        result = _format_output(data, fmt)
 
     if output:
         Path(output).write_text(result)
@@ -108,7 +178,8 @@ def graph(step_file: str, mode: str, output: str | None):
 @cli.command()
 @click.argument("step_file")
 @click.argument("query_str")
-def query(step_file: str, query_str: str):
+@click.option("--format", "fmt", type=click.Choice(["json", "table", "yaml"]), default="table")
+def query(step_file: str, query_str: str, fmt: str):
     """Run a DSL query against a STEP file."""
     g = _load_graph(step_file)
     try:
@@ -116,6 +187,11 @@ def query(step_file: str, query_str: str):
     except ValueError as e:
         console.print(f"[red]Query error:[/red] {e}")
         sys.exit(1)
+
+    if fmt in ("json", "yaml"):
+        entities = [json.loads(e.model_dump_json()) for e in result]
+        click.echo(_format_output(entities, fmt))
+        return
 
     console.print(f"\n[bold]Query:[/bold] {query_str}")
     console.print(f"[bold]Results:[/bold] {len(result)} entities\n")
@@ -126,9 +202,15 @@ def query(step_file: str, query_str: str):
 
 @cli.command()
 @click.argument("step_file")
-def features(step_file: str):
+@click.option("--format", "fmt", type=click.Choice(["json", "table", "yaml"]), default="table")
+def features(step_file: str, fmt: str):
     """List recognized features with parameters."""
     g = _load_graph(step_file)
+
+    if fmt in ("json", "yaml"):
+        data = [json.loads(f.model_dump_json()) for f in g.features]
+        click.echo(_format_output(data, fmt))
+        return
 
     if not g.features:
         console.print("[dim]No features recognized.[/dim]")
@@ -191,3 +273,129 @@ def validate(step_file: str):
 
     console.print(f"\nSolids: {len(g.solids)}, Faces: {len(g.faces)}, "
                   f"Edges: {len(g.edges)}, Features: {len(g.features)}")
+
+
+@cli.command()
+@click.argument("step_file")
+@click.option("--material", default="steel", help="Material name or density in g/mm³")
+@click.option("--format", "fmt", type=click.Choice(["json", "table", "yaml"]), default="table")
+def properties(step_file: str, material: str, fmt: str):
+    """Compute physical properties (mass, CoG, moments of inertia)."""
+    from next3d.core.brep import load_step
+    from next3d.core.properties import MATERIALS, compute_physical_properties
+
+    path = Path(step_file)
+    if not path.exists():
+        console.print(f"[red]File not found:[/red] {path}")
+        sys.exit(1)
+
+    model = load_step(path)
+
+    # Resolve density
+    try:
+        density = float(material)
+    except ValueError:
+        density = MATERIALS.get(material.lower())
+        if density is None:
+            console.print(f"[red]Unknown material:[/red] {material}. "
+                          f"Available: {', '.join(MATERIALS.keys())}")
+            sys.exit(1)
+
+    props = compute_physical_properties(model.shape, density=density)
+
+    if fmt in ("json", "yaml"):
+        click.echo(_format_output(props.to_dict(), fmt))
+        return
+
+    console.print(f"\n[bold]Physical Properties: {step_file}[/bold]")
+    console.print(f"Material density: {density} g/mm³\n")
+
+    table = Table(title="Properties")
+    table.add_column("Property", style="cyan")
+    table.add_column("Value", style="green", justify="right")
+    table.add_column("Unit", style="dim")
+
+    table.add_row("Volume", f"{props.volume:.2f}", "mm³")
+    table.add_row("Surface Area", f"{props.surface_area:.2f}", "mm²")
+    table.add_row("Mass", f"{props.mass:.4f}", "g")
+    cog = props.center_of_gravity
+    table.add_row("Center of Gravity", f"({cog.x:.3f}, {cog.y:.3f}, {cog.z:.3f})", "mm")
+    table.add_row("Ixx", f"{props.ixx:.2f}", "g·mm²")
+    table.add_row("Iyy", f"{props.iyy:.2f}", "g·mm²")
+    table.add_row("Izz", f"{props.izz:.2f}", "g·mm²")
+    console.print(table)
+
+
+@cli.command()
+@click.argument("step_file")
+@click.option("--format", "fmt", type=click.Choice(["json", "table", "yaml"]), default="table")
+def manufacturing(step_file: str, fmt: str):
+    """Analyze manufacturing requirements."""
+    from next3d.core.manufacturing import analyze_manufacturing
+
+    g = _load_graph(step_file)
+    analysis = analyze_manufacturing(g)
+
+    if fmt in ("json", "yaml"):
+        click.echo(_format_output(analysis.to_dict(), fmt))
+        return
+
+    console.print(f"\n[bold]Manufacturing Analysis: {step_file}[/bold]\n")
+
+    # Summary
+    console.print(f"Minimum axes required: [bold]{analysis.min_axes}[/bold]-axis")
+    console.print(f"Complexity score: [bold]{analysis.complexity_score:.0f}[/bold] / 100")
+    console.print(f"Suggested processes: {', '.join(analysis.suggested_processes)}\n")
+
+    # Machining axes
+    if analysis.machining_axes:
+        at = Table(title="Machining Axes")
+        at.add_column("Direction", style="cyan")
+        at.add_column("Features", style="green", justify="right")
+        at.add_column("Description")
+        for ax in analysis.machining_axes:
+            d = ax.direction
+            at.add_row(f"({d.x:.2f}, {d.y:.2f}, {d.z:.2f})", str(len(ax.features)), ax.description)
+        console.print(at)
+
+    # Feature assessments
+    if analysis.feature_assessments:
+        ft = Table(title="Feature Manufacturability")
+        ft.add_column("Type", style="yellow")
+        ft.add_column("Process", style="cyan")
+        ft.add_column("Difficulty", style="green")
+        ft.add_column("Tool")
+        for a in analysis.feature_assessments:
+            ft.add_row(
+                a.get("feature_type", ""),
+                a.get("process", ""),
+                a.get("difficulty", ""),
+                a.get("tool", ""),
+            )
+        console.print(ft)
+
+    # Warnings
+    if analysis.warnings:
+        console.print("\n[yellow]Warnings:[/yellow]")
+        for w in analysis.warnings:
+            console.print(f"  - {w}")
+
+
+@cli.command()
+@click.argument("step_file")
+@click.option("--output", "-o", type=click.Path(), help="Write to file")
+def embeddings(step_file: str, output: str | None):
+    """Export graph embeddings for GNN/ML models."""
+    from next3d.ai.embeddings import to_graph_tensors
+
+    g = _load_graph(step_file)
+    tensors = to_graph_tensors(g)
+    result = json.dumps(tensors, indent=2)
+
+    if output:
+        Path(output).write_text(result)
+        console.print(f"[green]Embeddings written to {output}[/green]")
+        console.print(f"  Nodes: {tensors['num_nodes']}, Edges: {tensors['num_edges']}, "
+                      f"Feature dim: {tensors['feature_dim']}")
+    else:
+        click.echo(result)

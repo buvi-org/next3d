@@ -7,7 +7,7 @@ at every level: vertices, edges, faces, features, and the full semantic graph.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -171,7 +171,7 @@ class Relationship(BaseModel):
     source_id: str
     target_id: str
     relationship_type: RelationshipType
-    parameters: dict[str, float] = Field(default_factory=dict)
+    parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

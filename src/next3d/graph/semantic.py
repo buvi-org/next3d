@@ -10,6 +10,7 @@ from pathlib import Path
 
 from next3d.core.brep import load_step
 from next3d.core.identity import solid_id
+from next3d.core.patterns import detect_linear_patterns, detect_symmetric_features
 from next3d.core.relationships import detect_all_relationships
 from next3d.core.schema import SemanticGraph, SolidData, Vec3
 from next3d.core.topology import build_topology_graph
@@ -18,7 +19,7 @@ from next3d.features.engine import recognize_all
 
 from OCP.BRepGProp import BRepGProp
 from OCP.GProp import GProp_GProps
-from OCP.TopAbs import TopAbs_SOLID
+from OCP.TopAbs import TopAbs_FACE, TopAbs_SOLID
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS
 
@@ -43,8 +44,14 @@ def build_semantic_graph(step_path: str | Path) -> SemanticGraph:
     # Build topology
     _nx_graph, faces, edges, vertices, adjacency = build_topology_graph(model.shape)
 
-    # Extract solids
+    # Extract solids with proper face-to-solid mapping
     solids = []
+    face_hash_to_pid = {}
+    for f in faces:
+        # We'll match faces by centroid+area fingerprint
+        key = (round(f.centroid.x, 4), round(f.centroid.y, 4), round(f.centroid.z, 4), round(f.area, 4))
+        face_hash_to_pid[key] = f.persistent_id
+
     sexp = TopExp_Explorer(model.shape, TopAbs_SOLID)
     while sexp.More():
         s = sexp.Current()
@@ -55,13 +62,25 @@ def build_semantic_graph(step_path: str | Path) -> SemanticGraph:
         centroid = Vec3(x=cp.X(), y=cp.Y(), z=cp.Z())
         pid = solid_id(centroid.x, centroid.y, centroid.z, volume)
 
-        # Collect face IDs belonging to this solid
-        face_ids = [f.persistent_id for f in faces]  # simplified: assign all faces to first solid
+        # Collect face IDs belonging to THIS solid by iterating its faces
+        solid_face_ids = []
+        fexp = TopExp_Explorer(s, TopAbs_FACE)
+        while fexp.More():
+            face_shape = fexp.Current()
+            fprops = GProp_GProps()
+            BRepGProp.SurfaceProperties_s(face_shape, fprops)
+            farea = fprops.Mass()
+            fcp = fprops.CentreOfMass()
+            key = (round(fcp.X(), 4), round(fcp.Y(), 4), round(fcp.Z(), 4), round(farea, 4))
+            fpid = face_hash_to_pid.get(key)
+            if fpid and fpid not in solid_face_ids:
+                solid_face_ids.append(fpid)
+            fexp.Next()
 
         solids.append(
             SolidData(
                 persistent_id=pid,
-                face_ids=face_ids,
+                face_ids=solid_face_ids,
                 volume=volume,
                 centroid=centroid,
             )
@@ -73,6 +92,11 @@ def build_semantic_graph(step_path: str | Path) -> SemanticGraph:
 
     # Detect geometric relationships
     relationships = detect_all_relationships(faces, adjacency)
+
+    # Detect inter-feature relationships (symmetry, patterns)
+    face_lookup = {f.persistent_id: f for f in faces}
+    relationships.extend(detect_symmetric_features(features, face_lookup))
+    relationships.extend(detect_linear_patterns(features, face_lookup))
 
     return SemanticGraph(
         solids=solids,
