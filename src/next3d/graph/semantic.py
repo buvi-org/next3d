@@ -21,17 +21,11 @@ from OCP.BRepGProp import BRepGProp
 from OCP.GProp import GProp_GProps
 from OCP.TopAbs import TopAbs_FACE, TopAbs_SOLID
 from OCP.TopExp import TopExp_Explorer
-from OCP.TopoDS import TopoDS
+from OCP.TopoDS import TopoDS, TopoDS_Shape
 
 
 def build_semantic_graph(step_path: str | Path) -> SemanticGraph:
     """Build the complete semantic graph from a STEP file.
-
-    This is the main entry point for the system. It:
-    1. Loads the STEP file
-    2. Builds the topology graph
-    3. Runs feature recognition
-    4. Assembles everything into a SemanticGraph
 
     Args:
         step_path: Path to a STEP file.
@@ -40,9 +34,23 @@ def build_semantic_graph(step_path: str | Path) -> SemanticGraph:
         A SemanticGraph — the '3D DOM' of the part.
     """
     model = load_step(step_path)
+    return build_semantic_graph_from_shape(model.shape)
 
+
+def build_semantic_graph_from_shape(shape: TopoDS_Shape) -> SemanticGraph:
+    """Build the semantic graph from an in-memory OpenCascade shape.
+
+    This is the low-level entry point used by the modeling session
+    to rebuild the graph after modifications.
+
+    Args:
+        shape: An OpenCascade TopoDS_Shape.
+
+    Returns:
+        A SemanticGraph.
+    """
     # Build topology
-    _nx_graph, faces, edges, vertices, adjacency = build_topology_graph(model.shape)
+    _nx_graph, faces, edges, vertices, adjacency = build_topology_graph(shape)
 
     # Extract solids with proper face-to-solid mapping
     solids = []
@@ -52,7 +60,7 @@ def build_semantic_graph(step_path: str | Path) -> SemanticGraph:
         key = (round(f.centroid.x, 4), round(f.centroid.y, 4), round(f.centroid.z, 4), round(f.area, 4))
         face_hash_to_pid[key] = f.persistent_id
 
-    sexp = TopExp_Explorer(model.shape, TopAbs_SOLID)
+    sexp = TopExp_Explorer(shape, TopAbs_SOLID)
     while sexp.More():
         s = sexp.Current()
         props = GProp_GProps()
