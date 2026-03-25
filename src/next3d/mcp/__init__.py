@@ -1163,30 +1163,28 @@ def delete_body(name: str) -> str:
 @mcp.tool()
 def place_body(
     name: str,
-    x: float = 0,
-    y: float = 0,
-    z: float = 0,
-    axis_x: float = 0,
-    axis_y: float = 0,
-    axis_z: float = 1,
-    angle_degrees: float = 0,
+    on_body: str,
+    on_face: str = ">Z",
+    align_face: str = "<Z",
+    offset: float = 0.0,
 ) -> str:
-    """Position a body in assembly space.
+    """Place a body via surface mate constraint.
+
+    Positions the body so that its align_face sits against (or offset from)
+    the on_face of on_body. The placement transform is computed automatically
+    from the face geometry.
 
     Args:
         name: Body to place
-        x: X translation in mm
-        y: Y translation in mm
-        z: Z translation in mm
-        axis_x: Rotation axis X
-        axis_y: Rotation axis Y
-        axis_z: Rotation axis Z (default 1 = around Z)
-        angle_degrees: Rotation angle
+        on_body: Target body to place against
+        on_face: Face selector on target body (e.g. '>Z' for top face)
+        align_face: Face selector on body being placed (default '<Z' = bottom)
+        offset: Gap distance along face normal (0 = touching)
     """
     r = _executor.call("place_body", {
-        "name": name, "x": x, "y": y, "z": z,
-        "axis_x": axis_x, "axis_y": axis_y, "axis_z": axis_z,
-        "angle_degrees": angle_degrees,
+        "name": name, "on_body": on_body,
+        "on_face": on_face, "align_face": align_face,
+        "offset": offset,
     })
     return _format_result(r)
 

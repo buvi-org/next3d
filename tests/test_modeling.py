@@ -947,36 +947,53 @@ class TestAssembly:
         s = ModelingSession()
         s.create_body("base", "box", length=100, width=100, height=10)
         s.create_body("pillar", "cylinder", radius=5, height=50)
-        data = s.place_body("pillar", x=20, y=20, z=10)
+        data = s.place_body("pillar", on_body="base", on_face=">Z")
         assert data["body"] == "pillar"
-        assert data["placement"]["translation"]["z"] == 10
+        assert data["on_body"] == "base"
+        # Centered box top is at z=5, cylinder bottom at z=-25.
+        # Translation z = 5 - (-25) = 30 aligns the faces.
+        z = data["placement"]["translation"]["z"]
+        assert abs(z - 30.0) < 1.0
+
+    def test_place_body_with_offset(self):
+        s = ModelingSession()
+        s.create_body("base", "box", length=100, width=100, height=10)
+        s.create_body("part", "box", length=20, width=20, height=5)
+        data = s.place_body("part", on_body="base", on_face=">Z", offset=2.0)
+        # Box top at z=5, part bottom at z=-2.5 => translation z = 5+2-(-2.5) = 9.5
+        z = data["placement"]["translation"]["z"]
+        assert abs(z - 9.5) < 1.0
+
+    def test_place_body_unknown_body(self):
+        s = ModelingSession()
+        s.create_body("base", "box", length=10, width=10, height=10)
+        with pytest.raises(ModelingError):
+            s.place_body("nonexistent", on_body="base", on_face=">Z")
+
+    def test_place_body_unknown_target(self):
+        s = ModelingSession()
+        s.create_body("part", "box", length=10, width=10, height=10)
+        with pytest.raises(ModelingError):
+            s.place_body("part", on_body="nonexistent", on_face=">Z")
 
     def test_export_assembly(self, tmp_path):
         s = ModelingSession()
         s.create_body("base", "box", length=100, width=100, height=10)
         s.create_body("pillar", "cylinder", radius=5, height=50)
-        s.place_body("pillar", z=10)
+        s.place_body("pillar", on_body="base", on_face=">Z")
         out = tmp_path / "assembly.step"
         s.export_assembly(out)
         assert out.exists()
         assert out.stat().st_size > 0
 
     def test_check_interference_clear(self):
-        """Two separated but close bodies should not interfere."""
+        """Two bodies placed on opposite faces should not interfere."""
         s = ModelingSession()
-        s.create_body("a", "box", length=10, width=10, height=10)
-        s.create_body("b", "box", length=10, width=10, height=10)
-        s.place_body("b", x=11)  # 1mm gap — close enough for valid assembly
-        result = s.check_interference("a", "b")
+        s.create_body("base", "box", length=100, width=100, height=10)
+        s.create_body("top", "box", length=20, width=20, height=5)
+        s.place_body("top", on_body="base", on_face=">Z", offset=1.0)
+        result = s.check_interference("base", "top")
         assert result["interferes"] is False
-
-    def test_place_body_rejects_floating(self):
-        """Placing a body >1mm from all others should fail."""
-        s = ModelingSession()
-        s.create_body("a", "box", length=10, width=10, height=10)
-        s.create_body("b", "box", length=10, width=10, height=10)
-        with pytest.raises(ModelingError):
-            s.place_body("b", x=50)  # 40mm gap — invalid assembly
 
     def test_check_interference_overlap(self):
         """Two overlapping bodies should interfere."""
@@ -1091,7 +1108,7 @@ class TestMultiBodyToolExecutor:
             "name": "column", "shape_type": "cylinder",
             "radius": 8, "height": 60,
         })
-        ex.call("place_body", {"name": "column", "z": 10})
+        ex.call("place_body", {"name": "column", "on_body": "base", "on_face": ">Z"})
         out = str(tmp_path / "assembly.step")
         r = ex.call("export_assembly", {"output_path": out})
         assert r.success
@@ -1143,9 +1160,9 @@ class TestMultiBodyToolExecutor:
             "name": "bolt_2", "part_type": "hex_bolt", "size": "M6", "length": 20,
         })
 
-        # Place bolts
-        ex.call("place_body", {"name": "bolt_1", "x": 30, "y": 25, "z": 5})
-        ex.call("place_body", {"name": "bolt_2", "x": -30, "y": 25, "z": 5})
+        # Place bolts on top of base plate
+        ex.call("place_body", {"name": "bolt_1", "on_body": "base_plate", "on_face": ">Z"})
+        ex.call("place_body", {"name": "bolt_2", "on_body": "base_plate", "on_face": ">Z"})
 
         # Check BOM
         r = ex.call("get_bom", {})

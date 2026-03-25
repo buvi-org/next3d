@@ -416,16 +416,13 @@ class DeleteBody(BaseModel):
 
 
 class PlaceBody(BaseModel):
-    """Position a body in assembly space."""
+    """Place a body via surface mate constraint."""
 
     name: str = Field(..., description="Body name to place")
-    x: float = Field(0, description="X translation in mm")
-    y: float = Field(0, description="Y translation in mm")
-    z: float = Field(0, description="Z translation in mm")
-    axis_x: float = Field(0, description="X component of rotation axis")
-    axis_y: float = Field(0, description="Y component of rotation axis")
-    axis_z: float = Field(1, description="Z component of rotation axis")
-    angle_degrees: float = Field(0, description="Rotation angle in degrees")
+    on_body: str = Field(..., description="Target body to place against")
+    on_face: str = Field(">Z", description="Face selector on target body (e.g. '>Z' for top)")
+    align_face: str = Field("<Z", description="Face selector on body being placed (e.g. '<Z' for bottom)")
+    offset: float = Field(0.0, description="Gap distance along face normal (0 = touching)")
 
 
 class CheckInterference(BaseModel):

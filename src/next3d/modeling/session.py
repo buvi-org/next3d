@@ -96,7 +96,7 @@ class ModelingSession:
         session.create_body("shaft", "cylinder", radius=5, height=80)
         session.set_active_body("bracket")
         session.add_hole(0, 0, 12)             # drills into bracket
-        session.place_body("shaft", x=0, y=0, z=20)
+        session.place_body("shaft", on_body="bracket", on_face=">Z")
     """
 
     def __init__(self) -> None:
@@ -412,22 +412,52 @@ class ModelingSession:
     def place_body(
         self,
         name: str,
-        x: float = 0,
-        y: float = 0,
-        z: float = 0,
-        axis_x: float = 0,
-        axis_y: float = 0,
-        axis_z: float = 1,
-        angle_degrees: float = 0,
+        on_body: str,
+        on_face: str = ">Z",
+        align_face: str = "<Z",
+        offset: float = 0.0,
     ) -> dict[str, Any]:
-        """Position a body in assembly space.
+        """Place a body via surface mate constraint.
 
-        After placement, checks proximity to all other bodies.
-        Raises ModelingError if the body is >1mm from every other body
-        (floating in space), as this cannot form a valid assembly.
+        Positions ``name`` so that its ``align_face`` sits against (or offset
+        from) the ``on_face`` of ``on_body``.  The placement transform is
+        computed automatically from the face geometry — no raw XYZ needed.
+
+        Args:
+            name: Body to place.
+            on_body: Target body to place against.
+            on_face: CadQuery face selector on the target body (e.g. ">Z" for top).
+            align_face: CadQuery face selector on the body being placed
+                        (default "<Z" = bottom face sits on target).
+            offset: Gap distance along the target face normal
+                    (0 = touching, positive = gap).
         """
         if name not in self._bodies:
             raise ModelingError(f"Body '{name}' not found.")
+        if on_body not in self._bodies:
+            raise ModelingError(f"Target body '{on_body}' not found.")
+
+        target_shape = self._bodies[on_body]
+        source_shape = self._bodies[name]
+
+        # Apply existing placement to target body if it has one
+        pa = self._placements.get(on_body)
+        if pa and (pa.x or pa.y or pa.z or pa.angle_degrees):
+            target_shape = kernel.translate(target_shape, pa.x, pa.y, pa.z)
+            if pa.angle_degrees:
+                target_shape = kernel.rotate(
+                    target_shape,
+                    (pa.axis_x, pa.axis_y, pa.axis_z),
+                    pa.angle_degrees,
+                )
+
+        x, y, z, axis_x, axis_y, axis_z, angle_degrees = (
+            kernel.compute_face_mate_placement(
+                target_shape, on_face,
+                source_shape, align_face,
+                offset,
+            )
+        )
 
         self._placements[name] = Placement(
             x=x, y=y, z=z,
@@ -435,48 +465,25 @@ class ModelingSession:
             angle_degrees=angle_degrees,
         )
 
-        # Proximity check: placed body must be within 1mm of at least one other body
-        other_bodies = [n for n in self._bodies if n != name]
-        if other_bodies:
-            min_gap = float("inf")
-            nearest = ""
-            for other in other_bodies:
-                try:
-                    result = self.check_interference(name, other)
-                    gap = result.get("min_clearance_mm", float("inf"))
-                    if result.get("interferes"):
-                        gap = 0.0  # overlapping = definitely in contact
-                    if gap < min_gap:
-                        min_gap = gap
-                        nearest = other
-                except Exception:
-                    continue
-
-            max_assembly_gap_mm = 1.0
-            if min_gap > max_assembly_gap_mm:
-                # Revert placement
-                del self._placements[name]
-                raise ModelingError(
-                    f"Cannot place '{name}' at ({x},{y},{z}): "
-                    f"nearest body '{nearest}' is {min_gap:.1f}mm away. "
-                    f"Assembly parts must be within {max_assembly_gap_mm}mm of each other. "
-                    f"Check coordinates and body dimensions."
-                )
-
         op = Operation(
             op_type=OpType.PLACE_BODY,
-            params={"name": name, "x": x, "y": y, "z": z,
-                     "axis_x": axis_x, "axis_y": axis_y, "axis_z": axis_z,
-                     "angle_degrees": angle_degrees},
-            description=f"Placed '{name}' at ({x},{y},{z})",
+            params={
+                "name": name, "on_body": on_body,
+                "on_face": on_face, "align_face": align_face,
+                "offset": offset,
+            },
+            description=f"Placed '{name}' on '{on_body}' face {on_face}",
         )
         self._log.append(op)
 
-        result = {"body": name, "placement": self._placements[name].to_dict()}
-        if other_bodies and min_gap > 0:
-            result["nearest_body"] = nearest
-            result["clearance_mm"] = round(min_gap, 3)
-        return result
+        return {
+            "body": name,
+            "on_body": on_body,
+            "on_face": on_face,
+            "align_face": align_face,
+            "offset": offset,
+            "placement": self._placements[name].to_dict(),
+        }
 
     def add_mate(
         self,

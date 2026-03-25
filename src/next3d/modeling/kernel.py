@@ -791,6 +791,141 @@ def add_draft(
 
 
 # ---------------------------------------------------------------------------
+# FACE MATE PLACEMENT — compute transforms from face constraints
+# ---------------------------------------------------------------------------
+
+def _get_face_centroid_and_normal(
+    shape: TopoDS_Shape,
+    face_selector: str,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    """Get the centroid and outward normal of a face selected by a CadQuery selector.
+
+    Returns:
+        (centroid_xyz, normal_xyz) — both as 3-tuples of floats.
+    """
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+    from OCP.GeomAbs import GeomAbs_Plane
+
+    wp = _wp_from_shape(shape)
+    face_cq = wp.faces(face_selector).val()
+    face_topo = face_cq.wrapped
+
+    # Centroid via surface properties
+    props = GProp_GProps()
+    BRepGProp.SurfaceProperties_s(face_topo, props)
+    cog = props.CentreOfMass()
+    centroid = (cog.X(), cog.Y(), cog.Z())
+
+    # Normal at centroid via surface adaptor
+    adaptor = BRepAdaptor_Surface(face_topo)
+
+    # Get UV at centroid — use middle of parameter range
+    u_min, u_max = adaptor.FirstUParameter(), adaptor.LastUParameter()
+    v_min, v_max = adaptor.FirstVParameter(), adaptor.LastVParameter()
+    u_mid = (u_min + u_max) / 2.0
+    v_mid = (v_min + v_max) / 2.0
+
+    from OCP.BRepLProp import BRepLProp_SLProps
+    slprops = BRepLProp_SLProps(adaptor, u_mid, v_mid, 1, 1e-6)
+    if slprops.IsNormalDefined():
+        n = slprops.Normal()
+        normal = (n.X(), n.Y(), n.Z())
+    else:
+        # Fallback for degenerate cases — assume +Z
+        normal = (0.0, 0.0, 1.0)
+
+    # Check face orientation — if face is reversed, flip normal
+    from OCP.TopAbs import TopAbs_REVERSED
+    if face_topo.Orientation() == TopAbs_REVERSED:
+        normal = (-normal[0], -normal[1], -normal[2])
+
+    return centroid, normal
+
+
+def compute_face_mate_placement(
+    target_shape: TopoDS_Shape,
+    target_face_selector: str,
+    source_shape: TopoDS_Shape,
+    source_face_selector: str,
+    offset: float = 0.0,
+) -> tuple[float, float, float, float, float, float, float]:
+    """Compute placement to mate source face onto target face.
+
+    The source body is positioned so that its ``source_face_selector`` face
+    sits against (or offset from) the ``target_face_selector`` face of the
+    target body.  The two face normals end up anti-parallel (face-to-face).
+
+    Args:
+        target_shape: The shape of the body being placed *on*.
+        target_face_selector: CadQuery face selector for the target face.
+        source_shape: The shape of the body being placed.
+        source_face_selector: CadQuery face selector for the source face.
+        offset: Gap distance along the target normal (0 = touching).
+
+    Returns:
+        (x, y, z, axis_x, axis_y, axis_z, angle_degrees) placement tuple.
+    """
+    t_centroid, t_normal = _get_face_centroid_and_normal(target_shape, target_face_selector)
+    s_centroid, s_normal = _get_face_centroid_and_normal(source_shape, source_face_selector)
+
+    # We want source normal to point opposite to target normal (face-to-face).
+    # The desired source normal direction is -t_normal.
+    desired_nx = -t_normal[0]
+    desired_ny = -t_normal[1]
+    desired_nz = -t_normal[2]
+
+    # Compute rotation from s_normal to desired direction
+    # Using axis-angle: axis = cross(s_normal, desired), angle = acos(dot)
+    sx, sy, sz = s_normal
+    dx, dy, dz = desired_nx, desired_ny, desired_nz
+
+    dot = sx * dx + sy * dy + sz * dz
+    # Clamp dot for numerical safety
+    dot = max(-1.0, min(1.0, dot))
+
+    cross_x = sy * dz - sz * dy
+    cross_y = sz * dx - sx * dz
+    cross_z = sx * dy - sy * dx
+    cross_mag = math.sqrt(cross_x**2 + cross_y**2 + cross_z**2)
+
+    if cross_mag < 1e-10:
+        if dot > 0:
+            # Already aligned — no rotation needed
+            axis_x, axis_y, axis_z = 0.0, 0.0, 1.0
+            angle_degrees = 0.0
+        else:
+            # 180° flip — pick an orthogonal axis
+            if abs(sx) < 0.9:
+                axis_x, axis_y, axis_z = 1.0, 0.0, 0.0
+            else:
+                axis_x, axis_y, axis_z = 0.0, 1.0, 0.0
+            angle_degrees = 180.0
+    else:
+        axis_x = cross_x / cross_mag
+        axis_y = cross_y / cross_mag
+        axis_z = cross_z / cross_mag
+        angle_degrees = math.degrees(math.acos(dot))
+
+    # After rotation, the source centroid moves. Compute the rotated source centroid.
+    # Apply the rotation to the source centroid to find where it ends up.
+    if abs(angle_degrees) > 1e-10:
+        rotated_source = rotate(source_shape, (axis_x, axis_y, axis_z), angle_degrees)
+        s_centroid_rotated, _ = _get_face_centroid_and_normal(rotated_source, source_face_selector)
+    else:
+        s_centroid_rotated = s_centroid
+
+    # Translation: align rotated source centroid to target centroid + offset along normal
+    tx = t_centroid[0] + t_normal[0] * offset - s_centroid_rotated[0]
+    ty = t_centroid[1] + t_normal[1] * offset - s_centroid_rotated[1]
+    tz = t_centroid[2] + t_normal[2] * offset - s_centroid_rotated[2]
+
+    return (tx, ty, tz, axis_x, axis_y, axis_z, angle_degrees)
+
+
+# ---------------------------------------------------------------------------
 # EXPORT — STL and 3MF mesh formats
 # ---------------------------------------------------------------------------
 

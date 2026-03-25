@@ -563,9 +563,12 @@ class ToolExecutor:
 
     def _handle_place_body(self, p) -> ToolResult:
         data = self._session.place_body(
-            p.name, p.x, p.y, p.z, p.axis_x, p.axis_y, p.axis_z, p.angle_degrees,
+            p.name, p.on_body, p.on_face, p.align_face, p.offset,
         )
-        return ToolResult(message=f"Placed '{p.name}' at ({p.x},{p.y},{p.z})", data=data)
+        return ToolResult(
+            message=f"Placed '{p.name}' on '{p.on_body}' face {p.on_face}",
+            data=data,
+        )
 
     def _handle_check_interference(self, p) -> ToolResult:
         data = self._session.check_interference(p.body_a, p.body_b)
