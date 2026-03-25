@@ -63,6 +63,60 @@ class CreateExtrusion(BaseModel):
     center_z: float = Field(0, description="Z offset for sketch plane")
 
 
+class CreateRevolve(BaseModel):
+    """Create a solid of revolution by rotating a 2D profile around an axis.
+
+    Ideal for shafts, pulleys, bushings, nozzles, and any rotationally symmetric part.
+    Profile is defined in the XZ plane."""
+
+    points: list[list[float]] = Field(
+        ...,
+        description="2D profile vertices [[x, z], ...] in XZ plane. Must be on one side of the axis. Auto-closed.",
+        min_length=3,
+    )
+    angle_degrees: float = Field(360.0, description="Revolution angle in degrees (360 = full)", gt=0, le=360)
+    axis_origin_x: float = Field(0, description="X coordinate of a point on the revolution axis")
+    axis_origin_z: float = Field(0, description="Z coordinate of a point on the revolution axis")
+    axis_direction_x: float = Field(0, description="X component of axis direction")
+    axis_direction_z: float = Field(1, description="Z component of axis direction")
+    center_x: float = Field(0, description="X offset")
+    center_y: float = Field(0, description="Y offset")
+    center_z: float = Field(0, description="Z offset")
+
+
+class CreateSweep(BaseModel):
+    """Create a solid by sweeping a 2D cross-section along a 3D path.
+
+    Ideal for pipes, channels, wiring guides, gasket grooves."""
+
+    profile_points: list[list[float]] = Field(
+        ..., description="2D cross-section vertices [[x,y], ...]. Auto-closed.", min_length=3,
+    )
+    path_points: list[list[float]] = Field(
+        ..., description="3D path vertices [[x,y,z], ...]. At least 2 points.", min_length=2,
+    )
+    center_x: float = Field(0, description="X offset for path")
+    center_y: float = Field(0, description="Y offset for path")
+    center_z: float = Field(0, description="Z offset for path")
+
+
+class CreateLoft(BaseModel):
+    """Create a solid by lofting between cross-sections at different heights.
+
+    Ideal for transitions: ducts, bottles, aerodynamic shapes."""
+
+    sections: list[list[list[float]]] = Field(
+        ..., description="List of 2D polygon sections [[[x,y],...], [[x,y],...], ...]", min_length=2,
+    )
+    heights: list[float] = Field(
+        ..., description="Z-height for each section. Must match sections length.",
+    )
+    ruled: bool = Field(False, description="If true, use straight ruled surfaces between sections")
+    center_x: float = Field(0, description="X offset")
+    center_y: float = Field(0, description="Y offset")
+    center_z: float = Field(0, description="Z offset")
+
+
 # ---------------------------------------------------------------------------
 # MODIFY tools
 # ---------------------------------------------------------------------------
@@ -149,6 +203,27 @@ class AddChamfer(BaseModel):
     edge_selector: str | None = Field(
         None, description="CadQuery edge selector. null = all edges.",
     )
+
+
+class AddShell(BaseModel):
+    """Hollow out a solid to uniform wall thickness. Essential for enclosures, housings, containers."""
+
+    thickness: float = Field(..., description="Wall thickness in mm", gt=0)
+    face_selector: str = Field(
+        ">Z",
+        description="CadQuery face selector for face(s) to remove (open). >Z=top, <Z=bottom, etc.",
+    )
+
+
+class AddDraft(BaseModel):
+    """Add draft (taper) angles to faces — required for injection molding and casting."""
+
+    angle_degrees: float = Field(..., description="Draft angle in degrees (typically 1-5°)", gt=0, lt=45)
+    face_selector: str = Field("|Z", description="Faces to draft (|Z = vertical faces)")
+    pull_direction_x: float = Field(0, description="X component of mold pull direction")
+    pull_direction_y: float = Field(0, description="Y component of mold pull direction")
+    pull_direction_z: float = Field(1, description="Z component of mold pull direction")
+    plane_selector: str = Field("<Z", description="Neutral plane (parting surface) selector")
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +329,30 @@ class ExportScript(BaseModel):
     pass
 
 
+class ExportStl(BaseModel):
+    """Export current geometry as STL for 3D printing."""
+
+    output_path: str = Field(..., description="Output STL file path")
+    linear_deflection: float = Field(0.1, description="Max chord deviation in mm (lower = finer mesh)", gt=0)
+    angular_deflection: float = Field(0.5, description="Max angle deviation in radians", gt=0)
+
+
+class Export3mf(BaseModel):
+    """Export current geometry as 3MF for 3D printing (modern format with color/material support)."""
+
+    output_path: str = Field(..., description="Output 3MF file path")
+    linear_deflection: float = Field(0.1, description="Max chord deviation in mm", gt=0)
+    angular_deflection: float = Field(0.5, description="Max angle deviation in radians", gt=0)
+
+
+class RenderPng(BaseModel):
+    """Render the current geometry to a PNG/SVG image for visual feedback."""
+
+    output_path: str = Field(..., description="Output image path (.png or .svg)")
+    width: int = Field(800, description="Image width in pixels", gt=0)
+    height: int = Field(600, description="Image height in pixels", gt=0)
+
+
 class LoadStep(BaseModel):
     """Load geometry from a STEP file."""
 
@@ -270,6 +369,9 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "create_cylinder": CreateCylinder,
     "create_sphere": CreateSphere,
     "create_extrusion": CreateExtrusion,
+    "create_revolve": CreateRevolve,
+    "create_sweep": CreateSweep,
+    "create_loft": CreateLoft,
     # Modify
     "add_hole": AddHole,
     "add_counterbore_hole": AddCounterboreHole,
@@ -279,6 +381,8 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "add_slot": AddSlot,
     "add_fillet": AddFillet,
     "add_chamfer": AddChamfer,
+    "add_shell": AddShell,
+    "add_draft": AddDraft,
     # Boolean
     "boolean_cut": BooleanCut,
     # Transform
@@ -289,9 +393,13 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "get_summary": GetSummary,
     "get_features": GetFeatures,
     "find_faces": FindFaces,
+    "measure_distance": MeasureDistance,
     # Session
     "undo": Undo,
     "export_step": ExportStep,
+    "export_stl": ExportStl,
+    "export_3mf": Export3mf,
+    "render_png": RenderPng,
     "export_script": ExportScript,
     "load_step": LoadStep,
 }

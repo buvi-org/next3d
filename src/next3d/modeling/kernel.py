@@ -409,3 +409,316 @@ def circular_pattern(
         result = boolean_cut(result, moved_tool)
     # First instance (i=0) is already there via the tool's original position
     return result
+
+
+# ---------------------------------------------------------------------------
+# REVOLVE / SWEEP / LOFT — profile-based solid creation
+# ---------------------------------------------------------------------------
+
+def create_revolve(
+    points: Sequence[tuple[float, float]],
+    angle_degrees: float = 360.0,
+    axis_origin: tuple[float, float] = (0, 0),
+    axis_direction: tuple[float, float] = (0, 1),
+    center: tuple[float, float, float] = (0, 0, 0),
+) -> TopoDS_Shape:
+    """Create a solid by revolving a 2D profile around an axis.
+
+    The profile is defined in the XZ plane and revolved around a line
+    defined by axis_origin and axis_direction (both in the XZ plane).
+
+    Args:
+        points: 2D profile vertices [(x, z), ...] in the XZ plane.
+                Must be on one side of the axis. Auto-closed.
+        angle_degrees: Rotation angle (360 = full revolution).
+        axis_origin: Point on the revolution axis (x, z) in sketch plane.
+        axis_direction: Direction of the revolution axis (x, z).
+        center: 3D offset for the sketch plane.
+    """
+    # Use CadQuery Workplane.revolve() which handles the profile→solid pipeline
+    # The XZ workplane maps: sketch X→world X, sketch Y→world Z
+    wp = cq.Workplane("XZ").transformed(offset=center)
+    wp = wp.polyline(list(points)).close()
+
+    # axis_origin and axis_direction are in the 2D sketch plane
+    # CadQuery revolve on a 2D workplane expects 2D (x, y) coords for axis
+    ax_start = (axis_origin[0], axis_origin[1])
+    ax_end = (
+        axis_origin[0] + axis_direction[0],
+        axis_origin[1] + axis_direction[1],
+    )
+
+    wp = wp.revolve(angle_degrees, axisStart=ax_start, axisEnd=ax_end)
+    return _to_shape(wp)
+
+
+def create_sweep(
+    profile_points: Sequence[tuple[float, float]],
+    path_points: Sequence[tuple[float, float, float]],
+    center: tuple[float, float, float] = (0, 0, 0),
+) -> TopoDS_Shape:
+    """Create a solid by sweeping a 2D profile along a 3D path.
+
+    Args:
+        profile_points: 2D cross-section vertices [(x, y), ...]. Auto-closed.
+        path_points: 3D path vertices [(x, y, z), ...]. At least 2 points.
+        center: Offset applied to the path.
+    """
+    # Build the sweep path as a wire
+    offset_path = [
+        (p[0] + center[0], p[1] + center[1], p[2] + center[2])
+        for p in path_points
+    ]
+
+    if len(offset_path) == 2:
+        # Straight line path
+        path_wp = (
+            cq.Workplane("XY")
+            .moveTo(offset_path[0][0], offset_path[0][1])
+            .workplane(offset=offset_path[0][2])
+            .lineTo(offset_path[1][0] - offset_path[0][0],
+                    offset_path[1][1] - offset_path[0][1])
+        )
+    else:
+        # Spline path through 3D points
+        pts = [cq.Vector(*p) for p in offset_path]
+        path_wire = cq.Wire.makeSpline(pts)
+        path_wp = cq.Workplane(obj=path_wire)
+
+    # Build profile on XY plane, then sweep along path
+    # Profile is centered at origin, sweep places it at path start
+    wp = cq.Workplane("XY")
+    wp = wp.polyline(list(profile_points)).close()
+    wp = wp.sweep(path_wp)
+    return _to_shape(wp)
+
+
+def create_loft(
+    sections: Sequence[Sequence[tuple[float, float]]],
+    heights: Sequence[float],
+    ruled: bool = False,
+    center: tuple[float, float, float] = (0, 0, 0),
+) -> TopoDS_Shape:
+    """Create a solid by lofting between cross-sections at different heights.
+
+    Args:
+        sections: List of 2D polygon profiles [(x, y), ...] for each section.
+        heights: Z-height for each section. Must be same length as sections.
+        ruled: If True, use ruled surfaces (straight lines between sections).
+        center: Offset for the base.
+    """
+    if len(sections) != len(heights):
+        raise ValueError("sections and heights must have the same length")
+
+    # Build each section as a wire at its height
+    wires = []
+    for section, h in zip(sections, heights):
+        wp = cq.Workplane("XY").transformed(
+            offset=(center[0], center[1], center[2] + h)
+        )
+        wp = wp.polyline(list(section)).close()
+        wires.append(wp.val())
+
+    # Use OCC directly for reliable multi-wire loft
+    from OCP.BRepOffsetAPI import BRepOffsetAPI_ThruSections
+    lofter = BRepOffsetAPI_ThruSections(True, ruled)
+    for wire in wires:
+        lofter.AddWire(wire.wrapped)
+    lofter.Build()
+
+    if not lofter.IsDone():
+        raise RuntimeError("Loft operation failed")
+
+    return lofter.Shape()
+
+
+# ---------------------------------------------------------------------------
+# SHELL / DRAFT — modify existing geometry
+# ---------------------------------------------------------------------------
+
+def add_shell(
+    shape: TopoDS_Shape,
+    thickness: float,
+    face_selector: str = ">Z",
+) -> TopoDS_Shape:
+    """Hollow out a solid to a uniform wall thickness.
+
+    The selected face(s) are removed (open), and the remaining walls
+    are offset inward by the specified thickness.
+
+    Args:
+        shape: The solid to shell.
+        thickness: Wall thickness in mm.
+        face_selector: CadQuery face selector for face(s) to remove.
+    """
+    wp = _wp_from_shape(shape)
+    wp = wp.faces(face_selector).shell(thickness)
+    return _to_shape(wp)
+
+
+def add_draft(
+    shape: TopoDS_Shape,
+    angle_degrees: float,
+    face_selector: str = "|Z",
+    pull_direction: tuple[float, float, float] = (0, 0, 1),
+    plane_selector: str = "<Z",
+) -> TopoDS_Shape:
+    """Add draft (taper) to faces for mold release.
+
+    Args:
+        shape: The solid to draft.
+        angle_degrees: Draft angle in degrees (typically 1-5° for molding).
+        face_selector: Selector for faces to draft (e.g. "|Z" for vertical faces).
+        pull_direction: Mold pull direction as (dx, dy, dz).
+        plane_selector: Selector for the neutral plane (parting surface).
+    """
+    from OCP.gp import gp_Dir, gp_Pln, gp_Pnt
+    from OCP.BRepOffsetAPI import BRepOffsetAPI_DraftAngle
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopAbs import TopAbs_FACE
+    from OCP.TopoDS import TopoDS
+
+    # Use CadQuery to select faces
+    wp = _wp_from_shape(shape)
+    draft_faces = wp.faces(face_selector).vals()
+    neutral_plane_face = wp.faces(plane_selector).val()
+
+    # Get the plane from the neutral face
+    from OCP.BRep import BRep_Tool
+    surf = BRep_Tool.Surface_s(neutral_plane_face.wrapped)
+    from OCP.GeomAdaptor import GeomAdaptor_Surface
+    adaptor = GeomAdaptor_Surface(surf)
+    pln = adaptor.Plane()
+
+    pull_dir = gp_Dir(*pull_direction)
+    angle_rad = math.radians(angle_degrees)
+
+    drafter = BRepOffsetAPI_DraftAngle(shape)
+    for face in draft_faces:
+        drafter.Add(face.wrapped, pull_dir, angle_rad, pln)
+    drafter.Build()
+
+    if not drafter.IsDone():
+        raise RuntimeError(f"Draft operation failed with angle {angle_degrees}°")
+
+    return drafter.Shape()
+
+
+# ---------------------------------------------------------------------------
+# EXPORT — STL and 3MF mesh formats
+# ---------------------------------------------------------------------------
+
+def export_stl(
+    shape: TopoDS_Shape,
+    path: str,
+    linear_deflection: float = 0.1,
+    angular_deflection: float = 0.5,
+) -> None:
+    """Export shape as STL (tessellated mesh) for 3D printing.
+
+    Args:
+        shape: The shape to export.
+        path: Output STL file path.
+        linear_deflection: Max chord deviation in mm (lower = finer mesh).
+        angular_deflection: Max angle deviation in radians.
+    """
+    from OCP.StlAPI import StlAPI_Writer
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+
+    mesh = BRepMesh_IncrementalMesh(shape, linear_deflection, False, angular_deflection)
+    mesh.Perform()
+
+    writer = StlAPI_Writer()
+    writer.Write(shape, path)
+
+
+def export_3mf(
+    shape: TopoDS_Shape,
+    path: str,
+    linear_deflection: float = 0.1,
+    angular_deflection: float = 0.5,
+) -> None:
+    """Export shape as 3MF for 3D printing (via STL intermediary + lib3mf).
+
+    Falls back to STL export if lib3mf is not available.
+
+    Args:
+        shape: The shape to export.
+        path: Output 3MF file path.
+        linear_deflection: Max chord deviation in mm.
+        angular_deflection: Max angle deviation in radians.
+    """
+    import tempfile
+    import os
+
+    # First tessellate and export as STL
+    stl_path = tempfile.mktemp(suffix=".stl")
+    try:
+        export_stl(shape, stl_path, linear_deflection, angular_deflection)
+
+        try:
+            import lib3mf
+            wrapper = lib3mf.Wrapper()
+            model = wrapper.CreateModel()
+            reader = model.QueryReader("stl")
+            reader.ReadFromFile(stl_path)
+            writer = model.QueryWriter("3mf")
+            writer.WriteToFile(path)
+        except ImportError:
+            # Fallback: use CadQuery's built-in if available
+            import cadquery as cq
+            solid = cq.Solid(shape)
+            cq.exporters.export(cq.Workplane(obj=solid), path, exportType="3MF")
+    finally:
+        if os.path.exists(stl_path):
+            os.unlink(stl_path)
+
+
+def render_png(
+    shape: TopoDS_Shape,
+    path: str,
+    width: int = 800,
+    height: int = 600,
+) -> None:
+    """Render shape to PNG image for visual feedback.
+
+    Uses CadQuery's SVG export as base, then converts to PNG if
+    cairosvg is available, otherwise saves as SVG.
+
+    Args:
+        shape: The shape to render.
+        path: Output image file path (.png or .svg).
+        width: Image width in pixels.
+        height: Image height in pixels.
+    """
+    import cadquery as cq
+
+    solid = cq.Solid(shape)
+    wp = cq.Workplane(obj=solid)
+
+    # CadQuery can export SVG natively
+    svg_content = cq.exporters.export(wp, fname=None, exportType="SVG")
+
+    if path.endswith(".svg"):
+        with open(path, "w") as f:
+            f.write(svg_content)
+        return
+
+    # Try to convert SVG to PNG
+    try:
+        import cairosvg
+        cairosvg.svg2png(
+            bytestring=svg_content.encode("utf-8"),
+            write_to=path,
+            output_width=width,
+            output_height=height,
+        )
+    except ImportError:
+        # Fallback: save as SVG with .png extension note
+        svg_path = path.rsplit(".", 1)[0] + ".svg"
+        with open(svg_path, "w") as f:
+            f.write(svg_content)
+        raise ImportError(
+            f"cairosvg not installed — saved SVG to {svg_path}. "
+            "Install cairosvg for PNG: pip install cairosvg"
+        )

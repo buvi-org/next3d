@@ -111,6 +111,39 @@ class ModelingSession:
             raise ModelingError("No geometry to export")
         save_step(self._shape, path)
 
+    def export_stl(
+        self,
+        path: str | Path,
+        linear_deflection: float = 0.1,
+        angular_deflection: float = 0.5,
+    ) -> None:
+        """Export current geometry as STL."""
+        if self._shape is None:
+            raise ModelingError("No geometry to export")
+        kernel.export_stl(self._shape, str(path), linear_deflection, angular_deflection)
+
+    def export_3mf(
+        self,
+        path: str | Path,
+        linear_deflection: float = 0.1,
+        angular_deflection: float = 0.5,
+    ) -> None:
+        """Export current geometry as 3MF."""
+        if self._shape is None:
+            raise ModelingError("No geometry to export")
+        kernel.export_3mf(self._shape, str(path), linear_deflection, angular_deflection)
+
+    def render_png(
+        self,
+        path: str | Path,
+        width: int = 800,
+        height: int = 600,
+    ) -> None:
+        """Render current geometry to PNG/SVG for visual feedback."""
+        if self._shape is None:
+            raise ModelingError("No geometry to render")
+        kernel.render_png(self._shape, str(path), width, height)
+
     # ------------------------------------------------------------------
     # CREATE operations
     # ------------------------------------------------------------------
@@ -170,6 +203,67 @@ class ModelingSession:
             op_type=OpType.CREATE_EXTRUSION,
             params={"points": points, "height": height, "center": list(center)},
             description=f"Extruded polygon, {len(points)} vertices, h={height}",
+        )
+        return self._apply(shape, op)
+
+    def create_revolve(
+        self,
+        points: list[tuple[float, float]],
+        angle_degrees: float = 360.0,
+        axis_origin: tuple[float, float] = (0, 0),
+        axis_direction: tuple[float, float] = (0, 1),
+        center: tuple[float, float, float] = (0, 0, 0),
+    ) -> dict[str, Any]:
+        """Create a solid of revolution."""
+        shape = kernel.create_revolve(
+            points, angle_degrees, axis_origin, axis_direction, center,
+        )
+        op = Operation(
+            op_type=OpType.CREATE_REVOLVE,
+            params={
+                "points": points, "angle_degrees": angle_degrees,
+                "axis_origin": list(axis_origin), "axis_direction": list(axis_direction),
+                "center": list(center),
+            },
+            description=f"Revolve {len(points)}-pt profile, {angle_degrees}°",
+        )
+        return self._apply(shape, op)
+
+    def create_sweep(
+        self,
+        profile_points: list[tuple[float, float]],
+        path_points: list[tuple[float, float, float]],
+        center: tuple[float, float, float] = (0, 0, 0),
+    ) -> dict[str, Any]:
+        """Create a solid by sweeping a profile along a path."""
+        shape = kernel.create_sweep(profile_points, path_points, center)
+        op = Operation(
+            op_type=OpType.CREATE_SWEEP,
+            params={
+                "profile_points": profile_points,
+                "path_points": path_points,
+                "center": list(center),
+            },
+            description=f"Sweep {len(profile_points)}-pt profile along {len(path_points)}-pt path",
+        )
+        return self._apply(shape, op)
+
+    def create_loft(
+        self,
+        sections: list[list[tuple[float, float]]],
+        heights: list[float],
+        ruled: bool = False,
+        center: tuple[float, float, float] = (0, 0, 0),
+    ) -> dict[str, Any]:
+        """Create a solid by lofting between cross-sections."""
+        shape = kernel.create_loft(sections, heights, ruled, center)
+        op = Operation(
+            op_type=OpType.CREATE_LOFT,
+            params={
+                "sections": sections, "heights": heights,
+                "ruled": ruled, "center": list(center),
+            },
+            description=f"Loft {len(sections)} sections",
         )
         return self._apply(shape, op)
 
@@ -343,6 +437,42 @@ class ModelingSession:
             op_type=OpType.ADD_CHAMFER,
             params={"distance": distance, "edge_selector": edge_selector},
             description=f"Chamfer d={distance}",
+        )
+        return self._apply(shape, op)
+
+    def add_shell(
+        self,
+        thickness: float,
+        face_selector: str = ">Z",
+    ) -> dict[str, Any]:
+        """Hollow out the solid to a uniform wall thickness."""
+        shape = kernel.add_shell(self._require_shape(), thickness, face_selector)
+        op = Operation(
+            op_type=OpType.ADD_SHELL,
+            params={"thickness": thickness, "face_selector": face_selector},
+            description=f"Shell t={thickness}",
+        )
+        return self._apply(shape, op)
+
+    def add_draft(
+        self,
+        angle_degrees: float,
+        face_selector: str = "|Z",
+        pull_direction: tuple[float, float, float] = (0, 0, 1),
+        plane_selector: str = "<Z",
+    ) -> dict[str, Any]:
+        """Add draft angles to faces."""
+        shape = kernel.add_draft(
+            self._require_shape(), angle_degrees, face_selector,
+            pull_direction, plane_selector,
+        )
+        op = Operation(
+            op_type=OpType.ADD_DRAFT,
+            params={
+                "angle_degrees": angle_degrees, "face_selector": face_selector,
+                "pull_direction": list(pull_direction), "plane_selector": plane_selector,
+            },
+            description=f"Draft {angle_degrees}°",
         )
         return self._apply(shape, op)
 

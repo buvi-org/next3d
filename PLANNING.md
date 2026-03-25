@@ -72,6 +72,71 @@ AI Agent Interface (JSON / Graph embeddings)
 
 ---
 
+## Strategic Feature Roadmap — Phases 4–7
+
+### Current State (Phases 1–3 complete)
+27 tools, feature recognition, semantic graph, manufacturing analysis, physical properties,
+STEP I/O. Foundation is solid but missing the operations that make up 80% of a mechanical
+designer's daily work.
+
+### Phase 4 — Advanced Modeling Operations (highest ROI)
+Operations designers use on almost every part. Unlocks 80% of part geometry.
+
+- [ ] **Revolve** — Rotate a 2D profile around an axis to create solids of revolution
+      (~30% of parts: shafts, pulleys, bushings, nozzles)
+- [ ] **Sweep** — Extrude a 2D profile along a path (pipes, channels, gasket grooves)
+- [ ] **Loft** — Transition between different cross-sections (ducts, bottles, aero shapes)
+- [ ] **Shell** — Hollow out a solid to uniform wall thickness (enclosures, housings)
+- [ ] **Draft** — Add taper angles to faces (required for injection molding and casting)
+- [ ] **STL export** — Tessellated mesh output for 3D printing
+- [ ] **3MF export** — Modern 3D printing format with color/material support
+- [ ] **Visual feedback** — Render model to PNG so AI can self-correct
+
+### Phase 5 — Multi-Body & Assembly
+Single-body modeling can't build real products.
+
+- [ ] Multi-body sessions (work with multiple solids, split/combine bodies)
+- [ ] Assembly context (place parts relative to each other with mate constraints)
+- [ ] Interference detection (check if parts collide)
+- [ ] Bill of Materials (part list with quantities, materials, mass)
+- [ ] Standard parts library (ISO metric fasteners, bearings, O-rings)
+- [ ] Parametric named dimensions (design intent propagation)
+
+### Phase 6 — Design Intelligence
+Where AI surpasses human designers.
+
+- [ ] 2D sketch + constraints (lines, arcs, circles, splines with geometric constraints)
+- [ ] Design rules engine (min wall thickness, max overhang, hole spacing rules)
+- [ ] DFM auto-check (draft angles for molding, min radii for CNC, undercut detection)
+- [ ] GD&T annotation (geometric dimensioning and tolerancing)
+- [ ] Topology optimization (given loads/constraints, optimal material distribution)
+- [ ] Visual feedback loop (render → AI "sees" → self-corrects)
+
+### Phase 7 — Domain Workflows & Simulation
+Specialized features for common design domains.
+
+- [ ] Sheet metal (bend, unfold, flat pattern, K-factor)
+- [ ] Weldments/structural (extrude profiles along paths — frames, trusses)
+- [ ] Enclosure generator (PCB outline + components → snap-fit enclosure)
+- [ ] Gear/cam generation (parametric involute gears, cams, sprockets)
+- [ ] FEA linear static (apply loads → check stress/deflection)
+- [ ] Motion simulation (verify mechanisms, collision detection)
+- [ ] Drawing generation (2D engineering drawings with dimensions, sections)
+- [ ] IGES export (legacy CAD interoperability)
+
+### Recommended Build Order
+1. **Revolve, Sweep, Loft, Shell, Draft** — unlock 80% of part geometry
+2. **STL/3MF export** — enable 3D printing workflow end-to-end
+3. **Visual feedback (PNG render)** — let AI self-correct
+4. **Multi-body + basic assembly mates**
+5. **Standard parts library** (start with ISO metric fasteners)
+6. **Parametric named dimensions**
+7. **Design rules engine + DFM auto-check**
+8. **2D constrained sketches**
+9. **Sheet metal, enclosure generator, gear generator**
+
+---
+
 ## Core Design Principles
 
 1. **B-Rep is truth** — All reasoning operates on exact geometry (NURBS, analytic surfaces), never on mesh approximations.

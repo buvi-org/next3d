@@ -110,6 +110,29 @@ class ToolExecutor:
         data = self._session.create_extrusion(points, p.height, (p.center_x, p.center_y, p.center_z))
         return ToolResult(message=f"Created extrusion, {len(points)} vertices", data=data)
 
+    def _handle_create_revolve(self, p) -> ToolResult:
+        points = [tuple(pt) for pt in p.points]
+        data = self._session.create_revolve(
+            points, p.angle_degrees,
+            (p.axis_origin_x, p.axis_origin_z),
+            (p.axis_direction_x, p.axis_direction_z),
+            (p.center_x, p.center_y, p.center_z),
+        )
+        return ToolResult(message=f"Created revolve, {len(points)} profile points, {p.angle_degrees}°", data=data)
+
+    def _handle_create_sweep(self, p) -> ToolResult:
+        profile = [tuple(pt) for pt in p.profile_points]
+        path = [tuple(pt) for pt in p.path_points]
+        data = self._session.create_sweep(profile, path, (p.center_x, p.center_y, p.center_z))
+        return ToolResult(message=f"Created sweep along {len(path)}-point path", data=data)
+
+    def _handle_create_loft(self, p) -> ToolResult:
+        sections = [[tuple(pt) for pt in sec] for sec in p.sections]
+        data = self._session.create_loft(
+            sections, p.heights, p.ruled, (p.center_x, p.center_y, p.center_z),
+        )
+        return ToolResult(message=f"Created loft with {len(sections)} sections", data=data)
+
     # ------------------------------------------------------------------
     # MODIFY handlers
     # ------------------------------------------------------------------
@@ -149,6 +172,18 @@ class ToolExecutor:
     def _handle_add_chamfer(self, p) -> ToolResult:
         data = self._session.add_chamfer(p.distance, p.edge_selector)
         return ToolResult(message=f"Added chamfer d={p.distance}", data=data)
+
+    def _handle_add_shell(self, p) -> ToolResult:
+        data = self._session.add_shell(p.thickness, p.face_selector)
+        return ToolResult(message=f"Shelled to t={p.thickness}", data=data)
+
+    def _handle_add_draft(self, p) -> ToolResult:
+        data = self._session.add_draft(
+            p.angle_degrees, p.face_selector,
+            (p.pull_direction_x, p.pull_direction_y, p.pull_direction_z),
+            p.plane_selector,
+        )
+        return ToolResult(message=f"Added draft {p.angle_degrees}°", data=data)
 
     # ------------------------------------------------------------------
     # BOOLEAN handlers
@@ -272,7 +307,19 @@ class ToolExecutor:
 
     def _handle_export_step(self, p) -> ToolResult:
         self._session.export_step(p.output_path)
-        return ToolResult(message=f"Exported to {p.output_path}")
+        return ToolResult(message=f"Exported STEP to {p.output_path}")
+
+    def _handle_export_stl(self, p) -> ToolResult:
+        self._session.export_stl(p.output_path, p.linear_deflection, p.angular_deflection)
+        return ToolResult(message=f"Exported STL to {p.output_path}")
+
+    def _handle_export_3mf(self, p) -> ToolResult:
+        self._session.export_3mf(p.output_path, p.linear_deflection, p.angular_deflection)
+        return ToolResult(message=f"Exported 3MF to {p.output_path}")
+
+    def _handle_render_png(self, p) -> ToolResult:
+        self._session.render_png(p.output_path, p.width, p.height)
+        return ToolResult(message=f"Rendered to {p.output_path}")
 
     def _handle_export_script(self, _p) -> ToolResult:
         script = self._session.to_script()

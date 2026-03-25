@@ -31,11 +31,10 @@ mcp = FastMCP(
     instructions=(
         "3D modeling tools for creating, modifying, querying, and exporting "
         "parametric 3D geometry. Start by creating a shape (create_box, "
-        "create_cylinder, etc.) or loading a STEP file (load_step). "
-        "Then modify it (add_hole, add_pocket, add_fillet, etc.), "
-        "query it (get_summary, get_features, find_faces), "
-        "and export it (export_step, export_script). "
-        "Use undo to revert the last operation. "
+        "create_cylinder, create_revolve, create_loft, etc.) or loading a STEP file. "
+        "Modify with add_hole, add_pocket, add_shell, add_draft, add_fillet, etc. "
+        "Query with get_summary, get_features, find_faces. "
+        "Export to STEP, STL, 3MF, or PNG/SVG. Use undo to revert. "
         "Face selectors: >Z=top, <Z=bottom, >X=right, <X=left, >Y=front, <Y=back. "
         "Edge selectors: |Z=vertical, |X=along-X, #Z=perpendicular-to-Z."
     ),
@@ -151,6 +150,97 @@ def create_extrusion(
     """
     r = _executor.call("create_extrusion", {
         "points": points, "height": height,
+        "center_x": center_x, "center_y": center_y, "center_z": center_z,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def create_revolve(
+    points: list[list[float]],
+    angle_degrees: float = 360.0,
+    axis_origin_x: float = 0,
+    axis_origin_z: float = 0,
+    axis_direction_x: float = 0,
+    axis_direction_z: float = 1,
+    center_x: float = 0,
+    center_y: float = 0,
+    center_z: float = 0,
+) -> str:
+    """Create a solid of revolution — rotate a 2D profile around an axis.
+
+    Ideal for shafts, pulleys, bushings, nozzles (~30% of all mechanical parts).
+    Profile is in XZ plane; default axis is Z (vertical).
+
+    Args:
+        points: 2D profile vertices [[x,z], ...] in XZ plane. Must be on one side of axis.
+        angle_degrees: Revolution angle (360 = full revolution)
+        axis_origin_x: X of a point on the revolution axis
+        axis_origin_z: Z of a point on the revolution axis
+        axis_direction_x: X component of axis direction
+        axis_direction_z: Z component of axis direction
+        center_x: X offset
+        center_y: Y offset
+        center_z: Z offset
+    """
+    r = _executor.call("create_revolve", {
+        "points": points, "angle_degrees": angle_degrees,
+        "axis_origin_x": axis_origin_x, "axis_origin_z": axis_origin_z,
+        "axis_direction_x": axis_direction_x, "axis_direction_z": axis_direction_z,
+        "center_x": center_x, "center_y": center_y, "center_z": center_z,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def create_sweep(
+    profile_points: list[list[float]],
+    path_points: list[list[float]],
+    center_x: float = 0,
+    center_y: float = 0,
+    center_z: float = 0,
+) -> str:
+    """Create a solid by sweeping a 2D cross-section along a 3D path.
+
+    Ideal for pipes, channels, wiring guides, gasket grooves.
+
+    Args:
+        profile_points: 2D cross-section vertices [[x,y], ...]
+        path_points: 3D path vertices [[x,y,z], ...]. Min 2 points.
+        center_x: X offset for path
+        center_y: Y offset for path
+        center_z: Z offset for path
+    """
+    r = _executor.call("create_sweep", {
+        "profile_points": profile_points, "path_points": path_points,
+        "center_x": center_x, "center_y": center_y, "center_z": center_z,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def create_loft(
+    sections: list[list[list[float]]],
+    heights: list[float],
+    ruled: bool = False,
+    center_x: float = 0,
+    center_y: float = 0,
+    center_z: float = 0,
+) -> str:
+    """Create a solid by lofting between cross-sections at different heights.
+
+    Ideal for transitions: ducts, bottles, aerodynamic shapes.
+
+    Args:
+        sections: List of 2D polygon sections [[[x,y],...], ...]
+        heights: Z-height for each section (must match sections length)
+        ruled: If true, straight ruled surfaces between sections
+        center_x: X offset
+        center_y: Y offset
+        center_z: Z offset
+    """
+    r = _executor.call("create_loft", {
+        "sections": sections, "heights": heights, "ruled": ruled,
         "center_x": center_x, "center_y": center_y, "center_z": center_z,
     })
     return _format_result(r)
@@ -351,6 +441,57 @@ def add_chamfer(
     return _format_result(r)
 
 
+@mcp.tool()
+def add_shell(
+    thickness: float,
+    face_selector: str = ">Z",
+) -> str:
+    """Hollow out a solid to uniform wall thickness.
+
+    Essential for enclosures, housings, containers. The selected face is
+    removed (left open) and remaining walls are offset inward.
+
+    Args:
+        thickness: Wall thickness in mm
+        face_selector: Face to remove (open). >Z=top, <Z=bottom, >X=right
+    """
+    r = _executor.call("add_shell", {
+        "thickness": thickness, "face_selector": face_selector,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def add_draft(
+    angle_degrees: float,
+    face_selector: str = "|Z",
+    pull_direction_x: float = 0,
+    pull_direction_y: float = 0,
+    pull_direction_z: float = 1,
+    plane_selector: str = "<Z",
+) -> str:
+    """Add draft (taper) angles to faces for mold release.
+
+    Required for injection molding and casting.
+
+    Args:
+        angle_degrees: Draft angle in degrees (typically 1-5)
+        face_selector: Faces to draft (|Z = vertical faces)
+        pull_direction_x: X component of mold pull direction
+        pull_direction_y: Y component of mold pull direction
+        pull_direction_z: Z component of mold pull direction
+        plane_selector: Neutral plane (parting surface) selector
+    """
+    r = _executor.call("add_draft", {
+        "angle_degrees": angle_degrees, "face_selector": face_selector,
+        "pull_direction_x": pull_direction_x,
+        "pull_direction_y": pull_direction_y,
+        "pull_direction_z": pull_direction_z,
+        "plane_selector": plane_selector,
+    })
+    return _format_result(r)
+
+
 # ---------------------------------------------------------------------------
 # BOOLEAN tools
 # ---------------------------------------------------------------------------
@@ -501,6 +642,69 @@ def export_step(output_path: str) -> str:
         output_path: Output file path (e.g. /tmp/part.step)
     """
     r = _executor.call("export_step", {"output_path": output_path})
+    return _format_result(r)
+
+
+@mcp.tool()
+def export_stl(
+    output_path: str,
+    linear_deflection: float = 0.1,
+    angular_deflection: float = 0.5,
+) -> str:
+    """Export current geometry as STL for 3D printing.
+
+    Args:
+        output_path: Output STL file path
+        linear_deflection: Max chord deviation in mm (lower = finer mesh)
+        angular_deflection: Max angle deviation in radians
+    """
+    r = _executor.call("export_stl", {
+        "output_path": output_path,
+        "linear_deflection": linear_deflection,
+        "angular_deflection": angular_deflection,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def export_3mf(
+    output_path: str,
+    linear_deflection: float = 0.1,
+    angular_deflection: float = 0.5,
+) -> str:
+    """Export current geometry as 3MF for 3D printing (modern format).
+
+    Args:
+        output_path: Output 3MF file path
+        linear_deflection: Max chord deviation in mm
+        angular_deflection: Max angle deviation in radians
+    """
+    r = _executor.call("export_3mf", {
+        "output_path": output_path,
+        "linear_deflection": linear_deflection,
+        "angular_deflection": angular_deflection,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def render_png(
+    output_path: str,
+    width: int = 800,
+    height: int = 600,
+) -> str:
+    """Render geometry to PNG/SVG image for visual feedback.
+
+    Lets the AI 'see' what it built and self-correct.
+
+    Args:
+        output_path: Output path (.png requires cairosvg, .svg always works)
+        width: Image width in pixels
+        height: Image height in pixels
+    """
+    r = _executor.call("render_png", {
+        "output_path": output_path, "width": width, "height": height,
+    })
     return _format_result(r)
 
 

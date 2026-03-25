@@ -12,7 +12,9 @@ from click.testing import CliRunner
 from next3d.cli.main import cli
 from next3d.modeling.kernel import (
     create_box, create_cylinder, create_sphere, create_extrusion,
+    create_revolve, create_sweep, create_loft,
     add_hole, add_pocket, add_boss, add_fillet, add_chamfer, add_slot,
+    add_shell, add_draft, export_stl,
     boolean_union, boolean_cut, translate, rotate,
 )
 from next3d.modeling.session import ModelingSession, ModelingError
@@ -123,6 +125,178 @@ class TestKernelModify:
         rotated = rotate(box, axis=(0, 0, 1), angle_degrees=90)
         g = build_semantic_graph_from_shape(rotated)
         assert len(g.solids) == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Advanced modeling kernel tests
+# ---------------------------------------------------------------------------
+
+class TestKernelAdvancedCreate:
+    def test_create_revolve_full(self):
+        """Revolve a rectangular profile 360° to make a hollow cylinder / washer shape."""
+        # Profile in XZ plane: a small rectangle to the right of the Z axis
+        points = [(5, 0), (10, 0), (10, 20), (5, 20)]
+        shape = create_revolve(points, 360.0, axis_origin=(0, 0), axis_direction=(0, 1))
+        g = build_semantic_graph_from_shape(shape)
+        assert len(g.solids) == 1
+        # A revolved rectangle produces cylindrical and planar faces
+        cylinders = [f for f in g.faces if f.surface_type.value == "cylinder"]
+        assert len(cylinders) >= 2  # inner + outer
+
+    def test_create_revolve_partial(self):
+        """Revolve 180° to make a half-pipe."""
+        points = [(5, 0), (10, 0), (10, 20), (5, 20)]
+        shape = create_revolve(points, 180.0, axis_origin=(0, 0), axis_direction=(0, 1))
+        g = build_semantic_graph_from_shape(shape)
+        assert len(g.solids) == 1
+
+    def test_create_loft_two_sections(self):
+        """Loft between a square and a circle-approximating polygon."""
+        import math
+        square = [(-10, -10), (10, -10), (10, 10), (-10, 10)]
+        # Approximate circle with 8-gon at height 30
+        r = 8
+        octagon = [(r * math.cos(i * math.pi / 4), r * math.sin(i * math.pi / 4)) for i in range(8)]
+        shape = create_loft([square, octagon], [0, 30])
+        g = build_semantic_graph_from_shape(shape)
+        assert len(g.solids) == 1
+        assert len(g.faces) > 4  # more complex than a prism
+
+
+class TestKernelAdvancedModify:
+    def test_add_shell(self):
+        """Shell a box to make an open-top container."""
+        box = create_box(60, 40, 30)
+        shelled = add_shell(box, 2.0, ">Z")
+        g = build_semantic_graph_from_shape(shelled)
+        # Shelling adds inner faces
+        assert len(g.faces) > 6
+
+    def test_add_shell_thick(self):
+        """Shell with larger wall thickness."""
+        box = create_box(100, 80, 50)
+        shelled = add_shell(box, 5.0, ">Z")
+        g = build_semantic_graph_from_shape(shelled)
+        assert len(g.solids) == 1
+        assert len(g.faces) > 6
+
+    def test_export_stl(self, tmp_path):
+        """Export a box as STL."""
+        box = create_box(50, 30, 10)
+        out = str(tmp_path / "test.stl")
+        export_stl(box, out)
+        assert Path(out).exists()
+        assert Path(out).stat().st_size > 0
+
+
+class TestSessionAdvanced:
+    def test_revolve_session(self):
+        """Test revolve through session interface."""
+        s = ModelingSession()
+        points = [(5, 0), (10, 0), (10, 20), (5, 20)]
+        data = s.create_revolve(points, 360.0)
+        assert data["solids"] == 1
+        assert data["faces"] > 2
+
+    def test_loft_session(self):
+        """Test loft through session interface."""
+        s = ModelingSession()
+        sec1 = [(-10, -10), (10, -10), (10, 10), (-10, 10)]
+        sec2 = [(-5, -5), (5, -5), (5, 5), (-5, 5)]
+        data = s.create_loft([sec1, sec2], [0, 20])
+        assert data["solids"] == 1
+
+    def test_shell_session(self):
+        """Test shell through session interface."""
+        s = ModelingSession()
+        s.create_box(60, 40, 30)
+        data = s.add_shell(2.0, ">Z")
+        assert data["faces"] > 6
+
+    def test_export_stl_session(self, tmp_path):
+        """Test STL export through session."""
+        s = ModelingSession()
+        s.create_box(50, 30, 10)
+        out = tmp_path / "session.stl"
+        s.export_stl(out)
+        assert out.exists()
+
+    def test_housing_workflow(self, tmp_path):
+        """Real-world workflow: box → shell → mounting holes → export STL."""
+        s = ModelingSession()
+        s.create_box(80, 60, 40)
+        s.add_shell(2.0, ">Z")
+        # Add mounting holes through the bottom
+        s.add_hole(25, 20, 4, face_selector="<Z")
+        s.add_hole(-25, 20, 4, face_selector="<Z")
+        s.add_hole(25, -20, 4, face_selector="<Z")
+        s.add_hole(-25, -20, 4, face_selector="<Z")
+        g = s.graph
+        assert len(g.features) >= 4  # at least the 4 holes
+        # Export
+        stl_out = str(tmp_path / "housing.stl")
+        s.export_stl(stl_out)
+        assert Path(stl_out).exists()
+
+
+class TestToolExecutorAdvanced:
+    def test_revolve_tool(self):
+        ex = ToolExecutor()
+        r = ex.call("create_revolve", {
+            "points": [[5, 0], [10, 0], [10, 20], [5, 20]],
+            "angle_degrees": 360,
+        })
+        assert r.success
+        assert r.data["solids"] == 1
+
+    def test_loft_tool(self):
+        ex = ToolExecutor()
+        r = ex.call("create_loft", {
+            "sections": [
+                [[-10, -10], [10, -10], [10, 10], [-10, 10]],
+                [[-5, -5], [5, -5], [5, 5], [-5, 5]],
+            ],
+            "heights": [0, 20],
+        })
+        assert r.success
+        assert r.data["solids"] == 1
+
+    def test_shell_tool(self):
+        ex = ToolExecutor()
+        ex.call("create_box", {"length": 60, "width": 40, "height": 30})
+        r = ex.call("add_shell", {"thickness": 2.0, "face_selector": ">Z"})
+        assert r.success
+        assert r.data["faces"] > 6
+
+    def test_export_stl_tool(self, tmp_path):
+        ex = ToolExecutor()
+        ex.call("create_box", {"length": 50, "width": 30, "height": 10})
+        out = str(tmp_path / "tool.stl")
+        r = ex.call("export_stl", {"output_path": out})
+        assert r.success
+        assert Path(out).exists()
+
+    def test_full_housing_workflow(self, tmp_path):
+        """AI workflow: create enclosure → shell → drill → export STL + STEP."""
+        ex = ToolExecutor()
+        ex.call("create_box", {"length": 80, "width": 60, "height": 40})
+        ex.call("add_shell", {"thickness": 2.0, "face_selector": ">Z"})
+        ex.call("add_hole", {"center_x": 25, "center_y": 20, "diameter": 4, "face_selector": "<Z"})
+        ex.call("add_hole", {"center_x": -25, "center_y": 20, "diameter": 4, "face_selector": "<Z"})
+
+        r = ex.call("get_summary", {})
+        assert r.data["faces"] > 10
+
+        step_out = str(tmp_path / "housing.step")
+        stl_out = str(tmp_path / "housing.stl")
+        ex.call("export_step", {"output_path": step_out})
+        ex.call("export_stl", {"output_path": stl_out})
+        assert Path(step_out).exists()
+        assert Path(stl_out).exists()
+
+    def test_tool_count_increased(self):
+        """Verify we now have more tools after Phase 4."""
+        assert len(TOOL_SCHEMAS) >= 32  # was 22, now 32 with Phase 4 additions
 
 
 # ---------------------------------------------------------------------------

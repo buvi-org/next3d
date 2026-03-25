@@ -50,8 +50,20 @@ class OpType(str, Enum):
     LINEAR_PATTERN = "linear_pattern"
     CIRCULAR_PATTERN = "circular_pattern"
 
+    # Advanced create
+    CREATE_REVOLVE = "create_revolve"
+    CREATE_SWEEP = "create_sweep"
+    CREATE_LOFT = "create_loft"
+
+    # Advanced modify
+    ADD_SHELL = "add_shell"
+    ADD_DRAFT = "add_draft"
+
     # File
     LOAD_STEP = "load_step"
+    EXPORT_STL = "export_stl"
+    EXPORT_3MF = "export_3mf"
+    RENDER_PNG = "render_png"
 
 
 class Operation(BaseModel):
@@ -170,6 +182,18 @@ class OperationLog(BaseModel):
                     f'.slot2D({p["length"]}, {p["width"]})'
                     f'.cutBlind(-{p["depth"]})'
                 )
+            elif ot == OpType.ADD_SHELL:
+                sel = p.get("face_selector", ">Z")
+                line = (
+                    f'{var_name} = {var_name}.faces("{sel}")'
+                    f'.shell({p["thickness"]})'
+                )
+            elif ot == OpType.CREATE_REVOLVE:
+                line = f"# Revolve: profile={p.get('points', [])}, angle={p.get('angle_degrees', 360)}"
+            elif ot == OpType.CREATE_SWEEP:
+                line = f"# Sweep: profile along path"
+            elif ot == OpType.CREATE_LOFT:
+                line = f"# Loft: {len(p.get('sections', []))} sections"
             elif ot == OpType.LOAD_STEP:
                 line = f'{var_name} = cq.importers.importStep("{p["path"]}")'
             else:
