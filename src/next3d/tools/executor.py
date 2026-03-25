@@ -302,6 +302,23 @@ class ToolExecutor:
     # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
+    # DESIGN INTELLIGENCE handlers
+    # ------------------------------------------------------------------
+
+    def _handle_check_design_rules(self, p) -> ToolResult:
+        data = self._session.check_design_rules(p.process)
+        status = "PASSED" if data["passed"] else f"FAILED ({data['errors']} errors, {data['warnings']} warnings)"
+        return ToolResult(message=f"Design check [{p.process}]: {status}", data=data)
+
+    def _handle_set_parameter(self, p) -> ToolResult:
+        data = self._session.set_parameter(p.name, p.value, p.description)
+        return ToolResult(message=f"Parameter '{p.name}' = {p.value}", data=data)
+
+    def _handle_get_parameters(self, _p) -> ToolResult:
+        data = self._session.get_parameters()
+        return ToolResult(message=f"{data['count']} parameters", data=data)
+
+    # ------------------------------------------------------------------
     # MULTI-BODY handlers
     # ------------------------------------------------------------------
 

@@ -74,43 +74,41 @@ AI Agent Interface (JSON / Graph embeddings)
 
 ## Strategic Feature Roadmap — Phases 4–7
 
-### Current State (Phases 1–3 complete)
-27 tools, feature recognition, semantic graph, manufacturing analysis, physical properties,
-STEP I/O. Foundation is solid but missing the operations that make up 80% of a mechanical
-designer's daily work.
+### Current State (Phases 1–5 complete)
+42 tools, feature recognition, semantic graph, manufacturing analysis, physical properties,
+STEP/STL/3MF I/O, multi-body assembly, interference detection, BOM, standard parts.
 
-### Phase 4 — Advanced Modeling Operations (highest ROI)
+### Phase 4 — Advanced Modeling Operations (COMPLETE)
 Operations designers use on almost every part. Unlocks 80% of part geometry.
 
-- [ ] **Revolve** — Rotate a 2D profile around an axis to create solids of revolution
-      (~30% of parts: shafts, pulleys, bushings, nozzles)
-- [ ] **Sweep** — Extrude a 2D profile along a path (pipes, channels, gasket grooves)
-- [ ] **Loft** — Transition between different cross-sections (ducts, bottles, aero shapes)
-- [ ] **Shell** — Hollow out a solid to uniform wall thickness (enclosures, housings)
-- [ ] **Draft** — Add taper angles to faces (required for injection molding and casting)
-- [ ] **STL export** — Tessellated mesh output for 3D printing
-- [ ] **3MF export** — Modern 3D printing format with color/material support
-- [ ] **Visual feedback** — Render model to PNG so AI can self-correct
+- [x] **Revolve** — Rotate a 2D profile around an axis to create solids of revolution
+- [x] **Sweep** — Extrude a 2D profile along a path (pipes, channels, gasket grooves)
+- [x] **Loft** — Transition between different cross-sections (ducts, bottles, aero shapes)
+- [x] **Shell** — Hollow out a solid to uniform wall thickness (enclosures, housings)
+- [x] **Draft** — Add taper angles to faces (required for injection molding and casting)
+- [x] **STL export** — Tessellated mesh output for 3D printing
+- [x] **3MF export** — Modern 3D printing format with color/material support
+- [x] **Visual feedback** — Render model to PNG/SVG so AI can self-correct
 
-### Phase 5 — Multi-Body & Assembly
+### Phase 5 — Multi-Body & Assembly (COMPLETE)
 Single-body modeling can't build real products.
 
-- [ ] Multi-body sessions (work with multiple solids, split/combine bodies)
-- [ ] Assembly context (place parts relative to each other with mate constraints)
-- [ ] Interference detection (check if parts collide)
-- [ ] Bill of Materials (part list with quantities, materials, mass)
-- [ ] Standard parts library (ISO metric fasteners, bearings, O-rings)
-- [ ] Parametric named dimensions (design intent propagation)
+- [x] Multi-body sessions (named bodies, create/switch/delete/duplicate)
+- [x] Assembly context (place_body with translation + rotation, mate constraints)
+- [x] Interference detection (boolean intersection volume + min clearance)
+- [x] Bill of Materials (material, volume, mass per body)
+- [x] Standard parts library (ISO M3-M12 hex bolts, nuts, washers, SHCS)
+- [ ] Parametric named dimensions (design intent propagation — deferred to Phase 6)
 
-### Phase 6 — Design Intelligence
+### Phase 6 — Design Intelligence (PARTIAL)
 Where AI surpasses human designers.
 
 - [ ] 2D sketch + constraints (lines, arcs, circles, splines with geometric constraints)
-- [ ] Design rules engine (min wall thickness, max overhang, hole spacing rules)
-- [ ] DFM auto-check (draft angles for molding, min radii for CNC, undercut detection)
+- [x] Design rules engine (6 process rule sets: CNC, injection molding, FDM, SLA, sheet metal, casting)
+- [x] DFM auto-check (hole diameter/spacing, draft angles, overhang limits, fillet radii)
+- [x] Parametric named dimensions (set_parameter/get_parameters for design intent)
 - [ ] GD&T annotation (geometric dimensioning and tolerancing)
 - [ ] Topology optimization (given loads/constraints, optimal material distribution)
-- [ ] Visual feedback loop (render → AI "sees" → self-corrects)
 
 ### Phase 7 — Domain Workflows & Simulation
 Specialized features for common design domains.

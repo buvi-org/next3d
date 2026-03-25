@@ -709,6 +709,45 @@ def render_png(
 
 
 @mcp.tool()
+def check_design_rules(process: str = "cnc_milling") -> str:
+    """Check active body against manufacturing design rules.
+
+    Validates hole diameters/spacing, draft angles, overhang limits, fillet radii.
+
+    Args:
+        process: cnc_milling, injection_molding, fdm_3d_print, sla_3d_print, sheet_metal, casting
+    """
+    r = _executor.call("check_design_rules", {"process": process})
+    return _format_result(r)
+
+
+@mcp.tool()
+def set_parameter(
+    name: str,
+    value: float,
+    description: str = "",
+) -> str:
+    """Define a named design parameter for parametric intent.
+
+    Args:
+        name: Parameter name (e.g. 'wall_thickness')
+        value: Value in mm or degrees
+        description: What this parameter controls
+    """
+    r = _executor.call("set_parameter", {
+        "name": name, "value": value, "description": description,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def get_parameters() -> str:
+    """Get all named design parameters."""
+    r = _executor.call("get_parameters", {})
+    return _format_result(r)
+
+
+@mcp.tool()
 def export_assembly(output_path: str) -> str:
     """Export the full assembly (all bodies with placements) as a STEP file.
 

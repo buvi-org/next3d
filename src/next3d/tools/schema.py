@@ -436,6 +436,34 @@ class ExportAssembly(BaseModel):
     output_path: str = Field(..., description="Output STEP file path")
 
 
+class CheckDesignRules(BaseModel):
+    """Check the active body against manufacturing design rules.
+
+    Validates hole diameters, spacing, draft angles, overhang limits, fillet radii,
+    and more — per manufacturing process."""
+
+    process: str = Field(
+        "cnc_milling",
+        description="Manufacturing process: cnc_milling, injection_molding, fdm_3d_print, sla_3d_print, sheet_metal, casting",
+    )
+
+
+class SetParameter(BaseModel):
+    """Define a named design parameter for parametric design intent.
+
+    Named parameters let the AI express intent like 'wall_thickness=3mm'
+    that can be referenced and modified later."""
+
+    name: str = Field(..., description="Parameter name (e.g. 'wall_thickness', 'bolt_diameter')")
+    value: float = Field(..., description="Parameter value in mm or degrees")
+    description: str = Field("", description="Human-readable description of what this parameter controls")
+
+
+class GetParameters(BaseModel):
+    """Get all named design parameters."""
+    pass
+
+
 class AddMateConstraint(BaseModel):
     """Declare a mate constraint between two bodies (for documentation and validation)."""
 
@@ -485,6 +513,10 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "get_features": GetFeatures,
     "find_faces": FindFaces,
     "measure_distance": MeasureDistance,
+    # Design intelligence
+    "check_design_rules": CheckDesignRules,
+    "set_parameter": SetParameter,
+    "get_parameters": GetParameters,
     # Multi-body
     "create_named_body": CreateNamedBody,
     "set_active_body": SetActiveBody,

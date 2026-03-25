@@ -295,13 +295,100 @@ class TestToolExecutorAdvanced:
         assert Path(stl_out).exists()
 
     def test_tool_count_increased(self):
-        """Verify we now have more tools after Phase 4."""
-        assert len(TOOL_SCHEMAS) >= 32  # was 22, now 42 with Phase 4+5 additions
+        """Verify we now have more tools after Phase 4+5+6."""
+        assert len(TOOL_SCHEMAS) >= 45  # 42 from Phase 5, +3 from Phase 6
 
 
 # ---------------------------------------------------------------------------
 # Phase 5 — Multi-Body, Assembly, Standard Parts
 # ---------------------------------------------------------------------------
+
+class TestDesignRules:
+    def test_cnc_check_passes(self):
+        """A simple box passes CNC milling rules."""
+        s = ModelingSession()
+        s.create_box(100, 60, 20)
+        result = s.check_design_rules("cnc_milling")
+        assert result["passed"] is True
+
+    def test_cnc_check_small_hole(self):
+        """A very small hole should trigger a violation."""
+        s = ModelingSession()
+        s.create_box(100, 60, 20)
+        s.add_hole(0, 0, 0.5)  # 0.5mm diameter < 1.0mm min
+        result = s.check_design_rules("cnc_milling")
+        # Should have at least one violation about min hole diameter
+        hole_violations = [v for v in result["violations"] if v["rule"] == "min_hole_diameter"]
+        assert len(hole_violations) >= 1
+
+    def test_injection_molding_draft_warning(self):
+        """A box without draft should warn for injection molding."""
+        s = ModelingSession()
+        s.create_box(50, 50, 30)
+        result = s.check_design_rules("injection_molding")
+        draft_violations = [v for v in result["violations"] if v["rule"] == "min_draft_angle"]
+        assert len(draft_violations) >= 1
+
+    def test_fdm_check(self):
+        """FDM check on a simple box (no overhangs)."""
+        s = ModelingSession()
+        s.create_box(50, 50, 20)
+        result = s.check_design_rules("fdm_3d_print")
+        assert result["passed"] is True
+
+    def test_available_processes(self):
+        from next3d.core.design_rules import list_available_processes
+        processes = list_available_processes()
+        assert "cnc_milling" in processes
+        assert "injection_molding" in processes
+        assert "fdm_3d_print" in processes
+        assert len(processes) >= 6
+
+    def test_check_via_executor(self):
+        ex = ToolExecutor()
+        ex.call("create_box", {"length": 100, "width": 60, "height": 20})
+        r = ex.call("check_design_rules", {"process": "cnc_milling"})
+        assert r.success
+        assert "passed" in r.data
+
+
+class TestParametricDimensions:
+    def test_set_and_get_parameter(self):
+        s = ModelingSession()
+        s.set_parameter("wall_thickness", 3.0, "Enclosure wall thickness")
+        s.set_parameter("bolt_size", 6.0, "M6 bolt diameter")
+        params = s.get_parameters()
+        assert params["count"] == 2
+        assert params["parameters"]["wall_thickness"]["value"] == 3.0
+        assert params["parameters"]["bolt_size"]["value"] == 6.0
+
+    def test_get_single_parameter(self):
+        s = ModelingSession()
+        s.set_parameter("height", 25.0)
+        assert s.get_parameter("height") == 25.0
+
+    def test_parameter_not_found(self):
+        s = ModelingSession()
+        with pytest.raises(ModelingError):
+            s.get_parameter("nonexistent")
+
+    def test_update_parameter(self):
+        s = ModelingSession()
+        s.set_parameter("wall", 2.0)
+        s.set_parameter("wall", 3.0)  # update
+        assert s.get_parameter("wall") == 3.0
+
+    def test_parametric_via_executor(self):
+        ex = ToolExecutor()
+        r = ex.call("set_parameter", {
+            "name": "wall_thickness", "value": 2.5,
+            "description": "Enclosure wall",
+        })
+        assert r.success
+        r = ex.call("get_parameters", {})
+        assert r.data["count"] == 1
+        assert r.data["parameters"]["wall_thickness"]["value"] == 2.5
+
 
 class TestMultiBody:
     def test_create_named_bodies(self):

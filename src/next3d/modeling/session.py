@@ -113,6 +113,9 @@ class ModelingSession:
         self._placements: dict[str, Placement] = {}
         self._mates: list[MateConstraint] = []
 
+        # Parametric dimensions
+        self._parameters: dict[str, dict[str, Any]] = {}  # name → {value, description}
+
         # Global operation log
         self._log = OperationLog()
 
@@ -560,6 +563,47 @@ class ModelingSession:
             "total_mass_grams": round(total_mass, 2),
             "items": items,
         }
+
+    # ------------------------------------------------------------------
+    # DESIGN RULES CHECK
+    # ------------------------------------------------------------------
+
+    def check_design_rules(self, process: str = "cnc_milling") -> dict[str, Any]:
+        """Check active body against manufacturing design rules."""
+        from next3d.core.design_rules import check_design_rules
+        g = self.graph
+        result = check_design_rules(g, process)
+        return result.to_dict()
+
+    # ------------------------------------------------------------------
+    # PARAMETRIC DIMENSIONS
+    # ------------------------------------------------------------------
+
+    def set_parameter(self, name: str, value: float, description: str = "") -> dict[str, Any]:
+        """Define or update a named design parameter."""
+        self._parameters[name] = {"value": value, "description": description}
+        return {
+            "name": name,
+            "value": value,
+            "description": description,
+            "total_parameters": len(self._parameters),
+        }
+
+    def get_parameters(self) -> dict[str, Any]:
+        """Get all named design parameters."""
+        return {
+            "count": len(self._parameters),
+            "parameters": {
+                name: {"value": p["value"], "description": p["description"]}
+                for name, p in self._parameters.items()
+            },
+        }
+
+    def get_parameter(self, name: str) -> float:
+        """Get a single parameter value. Raises if not found."""
+        if name not in self._parameters:
+            raise ModelingError(f"Parameter '{name}' not found. Available: {', '.join(self._parameters)}")
+        return self._parameters[name]["value"]
 
     # ------------------------------------------------------------------
     # LOAD / EXPORT
