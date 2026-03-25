@@ -962,13 +962,21 @@ class TestAssembly:
         assert out.stat().st_size > 0
 
     def test_check_interference_clear(self):
-        """Two separated bodies should not interfere."""
+        """Two separated but close bodies should not interfere."""
         s = ModelingSession()
         s.create_body("a", "box", length=10, width=10, height=10)
         s.create_body("b", "box", length=10, width=10, height=10)
-        s.place_body("b", x=50)  # far apart
+        s.place_body("b", x=11)  # 1mm gap — close enough for valid assembly
         result = s.check_interference("a", "b")
         assert result["interferes"] is False
+
+    def test_place_body_rejects_floating(self):
+        """Placing a body >1mm from all others should fail."""
+        s = ModelingSession()
+        s.create_body("a", "box", length=10, width=10, height=10)
+        s.create_body("b", "box", length=10, width=10, height=10)
+        with pytest.raises(ModelingError):
+            s.place_body("b", x=50)  # 40mm gap — invalid assembly
 
     def test_check_interference_overlap(self):
         """Two overlapping bodies should interfere."""

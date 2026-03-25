@@ -420,7 +420,12 @@ class ModelingSession:
         axis_z: float = 1,
         angle_degrees: float = 0,
     ) -> dict[str, Any]:
-        """Position a body in assembly space."""
+        """Position a body in assembly space.
+
+        After placement, checks proximity to all other bodies.
+        Raises ModelingError if the body is >1mm from every other body
+        (floating in space), as this cannot form a valid assembly.
+        """
         if name not in self._bodies:
             raise ModelingError(f"Body '{name}' not found.")
 
@@ -430,6 +435,34 @@ class ModelingSession:
             angle_degrees=angle_degrees,
         )
 
+        # Proximity check: placed body must be within 1mm of at least one other body
+        other_bodies = [n for n in self._bodies if n != name]
+        if other_bodies:
+            min_gap = float("inf")
+            nearest = ""
+            for other in other_bodies:
+                try:
+                    result = self.check_interference(name, other)
+                    gap = result.get("min_clearance_mm", float("inf"))
+                    if result.get("interferes"):
+                        gap = 0.0  # overlapping = definitely in contact
+                    if gap < min_gap:
+                        min_gap = gap
+                        nearest = other
+                except Exception:
+                    continue
+
+            max_assembly_gap_mm = 1.0
+            if min_gap > max_assembly_gap_mm:
+                # Revert placement
+                del self._placements[name]
+                raise ModelingError(
+                    f"Cannot place '{name}' at ({x},{y},{z}): "
+                    f"nearest body '{nearest}' is {min_gap:.1f}mm away. "
+                    f"Assembly parts must be within {max_assembly_gap_mm}mm of each other. "
+                    f"Check coordinates and body dimensions."
+                )
+
         op = Operation(
             op_type=OpType.PLACE_BODY,
             params={"name": name, "x": x, "y": y, "z": z,
@@ -438,7 +471,12 @@ class ModelingSession:
             description=f"Placed '{name}' at ({x},{y},{z})",
         )
         self._log.append(op)
-        return {"body": name, "placement": self._placements[name].to_dict()}
+
+        result = {"body": name, "placement": self._placements[name].to_dict()}
+        if other_bodies and min_gap > 0:
+            result["nearest_body"] = nearest
+            result["clearance_mm"] = round(min_gap, 3)
+        return result
 
     def add_mate(
         self,
