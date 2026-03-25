@@ -69,6 +69,25 @@ class OpType(str, Enum):
     PLACE_BODY = "place_body"
     ADD_MATE = "add_mate"
 
+    # GD&T
+    ADD_DATUM = "add_datum"
+    ADD_TOLERANCE = "add_tolerance"
+
+    # Sketch
+    CREATE_SKETCH = "create_sketch"
+    SKETCH_ADD_LINE = "sketch_add_line"
+    SKETCH_ADD_ARC = "sketch_add_arc"
+    SKETCH_ADD_CIRCLE = "sketch_add_circle"
+    SKETCH_ADD_RECT = "sketch_add_rect"
+    SKETCH_ADD_CONSTRAINT = "sketch_add_constraint"
+    SKETCH_EXTRUDE = "sketch_extrude"
+    SKETCH_REVOLVE = "sketch_revolve"
+
+    # Topology optimization
+    ADD_LOAD = "add_load"
+    ADD_BOUNDARY_CONDITION = "add_boundary_condition"
+    RUN_TOPOLOGY_OPT = "run_topology_opt"
+
     # File
     LOAD_STEP = "load_step"
     EXPORT_STL = "export_stl"

@@ -295,8 +295,8 @@ class TestToolExecutorAdvanced:
         assert Path(stl_out).exists()
 
     def test_tool_count_increased(self):
-        """Verify we now have more tools after Phase 4+5+6."""
-        assert len(TOOL_SCHEMAS) >= 45  # 42 from Phase 5, +3 from Phase 6
+        """Verify we now have more tools after Phase 4+5+6+sketch+GDT."""
+        assert len(TOOL_SCHEMAS) >= 53  # 45 prior + 8 sketch tools
 
 
 # ---------------------------------------------------------------------------
@@ -913,6 +913,205 @@ class TestToolExecutor:
 
 
 # ---------------------------------------------------------------------------
+# Sketch tests
+# ---------------------------------------------------------------------------
+
+class TestSketch:
+    def test_sketch_line_and_extrude(self):
+        """Create sketch with lines forming a closed triangle, extrude."""
+        s = ModelingSession()
+        s.create_sketch("XY")
+        s.sketch_add_line(0, 0, 10, 0)
+        s.sketch_add_line(10, 0, 5, 10)
+        s.sketch_add_line(5, 10, 0, 0)
+        data = s.sketch_extrude(5)
+        assert data["solids"] == 1
+        assert data["faces"] >= 5  # 2 triangular + 3 side faces
+
+    def test_sketch_circle_extrude(self):
+        """Sketch a circle, extrude to make a cylinder."""
+        s = ModelingSession()
+        s.create_sketch("XY")
+        s.sketch_add_circle(0, 0, 10)
+        data = s.sketch_extrude(20)
+        assert data["solids"] == 1
+        assert data["faces"] >= 3  # top, bottom, curved
+
+    def test_sketch_rect_extrude(self):
+        """Sketch a rectangle, extrude to make a box."""
+        s = ModelingSession()
+        s.create_sketch("XY")
+        s.sketch_add_rect(0, 0, 30, 20)
+        data = s.sketch_extrude(10)
+        assert data["solids"] == 1
+        assert data["faces"] == 6  # box
+
+    def test_sketch_with_constraints(self):
+        """Add constraints and verify they are stored."""
+        s = ModelingSession()
+        s.create_sketch("XY")
+        l1 = s.sketch_add_line(0, 0, 10, 0)["entity_id"]
+        l2 = s.sketch_add_line(10, 0, 10, 10)["entity_id"]
+        c1 = s.sketch_add_constraint("horizontal", l1)
+        assert "constraint_id" in c1
+        c2 = s.sketch_add_constraint("vertical", l2)
+        assert c2["constraint_count"] == 2
+        c3 = s.sketch_add_constraint("perpendicular", l1, l2)
+        assert c3["constraint_count"] == 3
+        c4 = s.sketch_add_constraint("distance", l1, value=10.0)
+        assert c4["constraint_count"] == 4
+
+    def test_sketch_revolve(self):
+        """Sketch an L-shaped profile, revolve to make a solid of revolution."""
+        s = ModelingSession()
+        s.create_sketch("XY")
+        # Profile: a rectangle offset from the Y axis
+        s.sketch_add_line(5, 0, 10, 0)
+        s.sketch_add_line(10, 0, 10, 20)
+        s.sketch_add_line(10, 20, 5, 20)
+        s.sketch_add_line(5, 20, 5, 0)
+        data = s.sketch_revolve(360.0, axis_origin=(0, 0), axis_direction=(0, 1))
+        assert data["solids"] == 1
+        assert data["faces"] >= 2
+
+    def test_sketch_via_executor(self):
+        """Test sketch workflow through ToolExecutor."""
+        ex = ToolExecutor()
+        r = ex.call("create_sketch", {"plane": "XY"})
+        assert r.success
+        assert r.data["status"] == "sketch_active"
+
+        r = ex.call("sketch_add_circle", {"cx": 0, "cy": 0, "radius": 15})
+        assert r.success
+        assert r.data["entity_count"] == 1
+
+        r = ex.call("sketch_extrude", {"height": 25})
+        assert r.success
+        assert r.data["solids"] == 1
+        assert r.data["faces"] >= 3
+
+
+# ---------------------------------------------------------------------------
+# GD&T tests
+# ---------------------------------------------------------------------------
+
+class TestGDT:
+    def test_add_datum_and_tolerance(self):
+        """Add datums and tolerances, verify they are stored."""
+        s = ModelingSession()
+        s.create_box(100, 60, 20)
+        g = s.graph
+        # Pick the first planar face as datum
+        plane_faces = [f for f in g.faces if f.surface_type.value == "plane"]
+        assert len(plane_faces) >= 1
+        face_id = plane_faces[0].persistent_id
+
+        # Add datum
+        data = s.add_datum("A", face_id, "Primary datum")
+        assert data["label"] == "A"
+        assert data["total_datums"] == 1
+
+        # Add tolerance
+        data = s.add_tolerance("flatness", 0.05, face_id, description="Surface flatness")
+        assert data["tolerance_type"] == "flatness"
+        assert data["total_tolerances"] == 1
+
+    def test_get_gdt(self):
+        """Get GD&T annotations and verify structure."""
+        s = ModelingSession()
+        s.create_box(100, 60, 20)
+        g = s.graph
+        face_id = g.faces[0].persistent_id
+
+        s.add_datum("A", face_id, "Primary datum")
+        s.add_tolerance("flatness", 0.05, face_id)
+        s.add_tolerance("position", 0.1, face_id, datum_refs=["A"], material_condition="MMC")
+
+        gdt = s.get_gdt()
+        assert gdt["datum_count"] == 1
+        assert gdt["tolerance_count"] == 2
+        assert gdt["body"] == "default"
+        assert len(gdt["datums"]) == 1
+        assert gdt["datums"][0]["label"] == "A"
+        assert len(gdt["tolerances"]) == 2
+        # No validation issues since entity_id is valid and datum is defined
+        assert len(gdt["validation_issues"]) == 0
+
+    def test_suggest_gdt(self):
+        """Create a box with holes, verify auto-suggestions."""
+        s = ModelingSession()
+        s.create_box(100, 60, 20)
+        s.add_hole(20, 10, 8)
+        s.add_hole(-20, -10, 8)
+
+        suggestions = s.suggest_gdt()
+        assert suggestions["datum_count"] >= 1  # at least datum A
+        assert suggestions["tolerance_count"] >= 1  # at least flatness or position
+        # Should suggest datum A for the largest planar face
+        assert any(d["label"] == "A" for d in suggestions["datums"])
+        # Should suggest position for through holes
+        position_tols = [
+            t for t in suggestions["tolerances"]
+            if t["tolerance_type"] == "position"
+        ]
+        assert len(position_tols) >= 1
+
+    def test_gdt_via_executor(self):
+        """Test GD&T through the ToolExecutor."""
+        ex = ToolExecutor()
+        ex.call("create_box", {"length": 100, "width": 60, "height": 20})
+
+        # Get a face ID from features/faces
+        r = ex.call("find_faces", {"surface_type": "plane", "normal_z": 1.0})
+        assert r.success
+        face_id = r.data["faces"][0]["id"]
+
+        # Add datum
+        r = ex.call("add_datum", {"label": "A", "entity_id": face_id, "description": "Top face"})
+        assert r.success
+        assert r.data["label"] == "A"
+
+        # Add tolerance
+        r = ex.call("add_tolerance", {
+            "tolerance_type": "flatness", "value": 0.05,
+            "entity_id": face_id,
+        })
+        assert r.success
+        assert r.data["tolerance_type"] == "flatness"
+
+        # Get GD&T
+        r = ex.call("get_gdt", {})
+        assert r.success
+        assert r.data["datum_count"] == 1
+        assert r.data["tolerance_count"] == 1
+
+        # Suggest GD&T
+        r = ex.call("suggest_gdt", {})
+        assert r.success
+        assert r.data["datum_count"] >= 1
+
+    def test_validate_gdt_missing_datum(self):
+        """Tolerance referencing undefined datum should produce validation error."""
+        s = ModelingSession()
+        s.create_box(100, 60, 20)
+        g = s.graph
+        face_id = g.faces[0].persistent_id
+
+        # Add tolerance referencing datum "B" without defining it
+        s.add_tolerance("position", 0.1, face_id, datum_refs=["B"])
+
+        gdt = s.get_gdt()
+        issues = gdt["validation_issues"]
+        # Should have an error about datum "B" not being defined
+        datum_errors = [
+            i for i in issues
+            if "datum" in i["message"].lower() and "B" in i["message"]
+        ]
+        assert len(datum_errors) >= 1
+        assert datum_errors[0]["severity"] == "error"
+
+
+# ---------------------------------------------------------------------------
 # Tool schema export tests
 # ---------------------------------------------------------------------------
 
@@ -1004,3 +1203,150 @@ class TestModelingCLI:
         assert result.exit_code == 0
         script = Path(script_out).read_text()
         assert "box" in script
+
+
+# ---------------------------------------------------------------------------
+# Topology Optimization tests
+# ---------------------------------------------------------------------------
+
+class TestTopologyOptimization:
+    def test_add_loads_and_bcs(self):
+        """Add loads and boundary conditions, verify they are stored."""
+        s = ModelingSession()
+        s.create_box(100, 60, 20)
+
+        # Add a load
+        data = s.add_load("downward", 0, 0, -1000, 0, 0, 10)
+        assert data["name"] == "downward"
+        assert data["total_loads"] == 1
+        assert data["force"]["z"] == -1000
+
+        # Add a second load
+        data = s.add_load("lateral", 500, 0, 0, 50, 0, 10)
+        assert data["total_loads"] == 2
+
+        # Add boundary conditions
+        data = s.add_boundary_condition("fixed_base", "fixed", "<Z")
+        assert data["name"] == "fixed_base"
+        assert data["bc_type"] == "fixed"
+        assert data["total_boundary_conditions"] == 1
+
+        data = s.add_boundary_condition("roller_side", "roller", "<X")
+        assert data["total_boundary_conditions"] == 2
+
+    def test_run_optimization(self):
+        """Create box, add load on top, fix bottom, run optimization."""
+        s = ModelingSession()
+        s.create_box(100, 60, 20)
+
+        # Load on top center
+        s.add_load("top_load", 0, 0, -500, 0, 0, 10)
+        # Fix bottom face
+        s.add_boundary_condition("fixed_bottom", "fixed", "<Z")
+
+        result = s.run_topology_optimization(volume_fraction=0.3, resolution=5)
+
+        assert "original_volume" in result
+        assert "optimized_volume" in result
+        assert "volume_reduction_pct" in result
+        assert "removal_regions" in result
+        assert "density_field" in result
+        assert "suggestions" in result
+        assert result["body"] == "default"
+
+    def test_optimization_reduces_volume(self):
+        """Verify optimization achieves volume reduction."""
+        s = ModelingSession()
+        s.create_box(100, 60, 20)
+
+        # Load on top center
+        s.add_load("top_load", 0, 0, -500, 0, 0, 10)
+        # Fix bottom face
+        s.add_boundary_condition("fixed_bottom", "fixed", "<Z")
+
+        result = s.run_topology_optimization(volume_fraction=0.3, resolution=6)
+
+        # Should achieve some volume reduction
+        assert result["volume_reduction_pct"] > 0
+        assert result["optimized_volume"] < result["original_volume"]
+        assert result["removal_regions_count"] > 0
+
+    def test_optimization_via_executor(self):
+        """Test the full topology optimization workflow through ToolExecutor."""
+        ex = ToolExecutor()
+
+        # Create geometry
+        r = ex.call("create_box", {"length": 100, "width": 60, "height": 20})
+        assert r.success
+
+        # Add load
+        r = ex.call("add_load", {
+            "name": "top_load", "fx": 0, "fy": 0, "fz": -500,
+            "px": 0, "py": 0, "pz": 10,
+        })
+        assert r.success
+        assert r.data["total_loads"] == 1
+
+        # Add boundary condition
+        r = ex.call("add_boundary_condition", {
+            "name": "fixed_base", "bc_type": "fixed", "face_selector": "<Z",
+        })
+        assert r.success
+        assert r.data["total_boundary_conditions"] == 1
+
+        # Run optimization
+        r = ex.call("run_topology_optimization", {
+            "volume_fraction": 0.4, "resolution": 5,
+        })
+        assert r.success
+        assert "volume_reduction_pct" in r.data
+        assert r.data["total_voxels"] > 0
+
+    def test_optimization_result_structure(self):
+        """Verify result has all expected fields with correct types."""
+        s = ModelingSession()
+        s.create_box(80, 50, 30)
+
+        s.add_load("force_1", 0, 0, -1000, 0, 0, 15)
+        s.add_boundary_condition("support", "fixed", "<Z")
+
+        result = s.run_topology_optimization(volume_fraction=0.5, resolution=5)
+
+        # Top-level fields
+        assert isinstance(result["original_volume"], float)
+        assert isinstance(result["optimized_volume"], float)
+        assert isinstance(result["volume_reduction_pct"], float)
+        assert isinstance(result["removal_regions_count"], int)
+        assert isinstance(result["total_voxels"], int)
+        assert isinstance(result["kept_voxels"], int)
+        assert isinstance(result["removal_regions"], list)
+        assert isinstance(result["density_field"], list)
+        assert isinstance(result["suggestions"], list)
+        assert isinstance(result["body"], str)
+
+        # Density field voxel structure
+        if result["density_field"]:
+            voxel = result["density_field"][0]
+            assert "x" in voxel
+            assert "y" in voxel
+            assert "z" in voxel
+            assert "density" in voxel
+            assert "stress_proxy" in voxel
+
+        # Removal region structure
+        if result["removal_regions"]:
+            region = result["removal_regions"][0]
+            assert "x" in region
+            assert "y" in region
+            assert "z" in region
+            assert "size" in region
+            assert "reason" in region
+
+        # Suggestions are non-empty strings
+        assert len(result["suggestions"]) > 0
+        for s_text in result["suggestions"]:
+            assert isinstance(s_text, str)
+            assert len(s_text) > 0
+
+        # Volume consistency
+        assert result["total_voxels"] == result["kept_voxels"] + result["removal_regions_count"]

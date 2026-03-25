@@ -74,9 +74,10 @@ AI Agent Interface (JSON / Graph embeddings)
 
 ## Strategic Feature Roadmap — Phases 4–7
 
-### Current State (Phases 1–5 complete)
-42 tools, feature recognition, semantic graph, manufacturing analysis, physical properties,
-STEP/STL/3MF I/O, multi-body assembly, interference detection, BOM, standard parts.
+### Current State (Phases 1–6 complete)
+60 tools, feature recognition, semantic graph, manufacturing analysis, physical properties,
+STEP/STL/3MF I/O, multi-body assembly, interference detection, BOM, standard parts,
+2D sketches, design rules, GD&T, topology optimization.
 
 ### Phase 4 — Advanced Modeling Operations (COMPLETE)
 Operations designers use on almost every part. Unlocks 80% of part geometry.
@@ -100,15 +101,15 @@ Single-body modeling can't build real products.
 - [x] Standard parts library (ISO M3-M12 hex bolts, nuts, washers, SHCS)
 - [ ] Parametric named dimensions (design intent propagation — deferred to Phase 6)
 
-### Phase 6 — Design Intelligence (PARTIAL)
+### Phase 6 — Design Intelligence (COMPLETE)
 Where AI surpasses human designers.
 
-- [ ] 2D sketch + constraints (lines, arcs, circles, splines with geometric constraints)
+- [x] 2D sketch + constraints (line, arc, circle, rect + geometric/dimensional constraints)
 - [x] Design rules engine (6 process rule sets: CNC, injection molding, FDM, SLA, sheet metal, casting)
 - [x] DFM auto-check (hole diameter/spacing, draft angles, overhang limits, fillet radii)
 - [x] Parametric named dimensions (set_parameter/get_parameters for design intent)
-- [ ] GD&T annotation (geometric dimensioning and tolerancing)
-- [ ] Topology optimization (given loads/constraints, optimal material distribution)
+- [x] GD&T annotation (datums, tolerance zones, auto-suggest per ASME Y14.5)
+- [x] Topology optimization (load cases, boundary conditions, voxel-based density optimization)
 
 ### Phase 7 — Domain Workflows & Simulation
 Specialized features for common design domains.

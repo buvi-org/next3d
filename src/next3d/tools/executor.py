@@ -413,6 +413,99 @@ class ToolExecutor:
         return ToolResult(message=f"Added {p.mate_type} mate: {p.body_a} ↔ {p.body_b}", data=data)
 
     # ------------------------------------------------------------------
+    # SKETCH handlers
+    # ------------------------------------------------------------------
+
+    def _handle_create_sketch(self, p) -> ToolResult:
+        data = self._session.create_sketch(p.plane)
+        return ToolResult(message=f"Sketch started on {p.plane}", data=data)
+
+    def _handle_sketch_add_line(self, p) -> ToolResult:
+        data = self._session.sketch_add_line(p.x1, p.y1, p.x2, p.y2)
+        return ToolResult(message=f"Added line ({p.x1},{p.y1})->({p.x2},{p.y2})", data=data)
+
+    def _handle_sketch_add_arc(self, p) -> ToolResult:
+        data = self._session.sketch_add_arc(p.cx, p.cy, p.radius, p.start_angle, p.end_angle)
+        return ToolResult(message=f"Added arc r={p.radius}", data=data)
+
+    def _handle_sketch_add_circle(self, p) -> ToolResult:
+        data = self._session.sketch_add_circle(p.cx, p.cy, p.radius)
+        return ToolResult(message=f"Added circle r={p.radius}", data=data)
+
+    def _handle_sketch_add_rect(self, p) -> ToolResult:
+        data = self._session.sketch_add_rect(p.cx, p.cy, p.width, p.height)
+        return ToolResult(message=f"Added rect {p.width}x{p.height}", data=data)
+
+    def _handle_sketch_add_constraint(self, p) -> ToolResult:
+        data = self._session.sketch_add_constraint(
+            p.constraint_type, p.entity_a, p.entity_b, p.value,
+        )
+        return ToolResult(message=f"Added {p.constraint_type} constraint", data=data)
+
+    def _handle_sketch_extrude(self, p) -> ToolResult:
+        data = self._session.sketch_extrude(p.height)
+        return ToolResult(message=f"Extruded sketch h={p.height}", data=data)
+
+    def _handle_sketch_revolve(self, p) -> ToolResult:
+        data = self._session.sketch_revolve(
+            p.angle_degrees,
+            (p.axis_origin_x, p.axis_origin_y),
+            (p.axis_direction_x, p.axis_direction_y),
+        )
+        return ToolResult(message=f"Revolved sketch {p.angle_degrees} deg", data=data)
+
+    # ------------------------------------------------------------------
+    # GD&T handlers
+    # ------------------------------------------------------------------
+
+    def _handle_add_datum(self, p) -> ToolResult:
+        data = self._session.add_datum(p.label, p.entity_id, p.description)
+        return ToolResult(message=f"Added datum {p.label}", data=data)
+
+    def _handle_add_tolerance(self, p) -> ToolResult:
+        data = self._session.add_tolerance(
+            p.tolerance_type, p.value, p.entity_id,
+            datum_refs=p.datum_refs,
+            material_condition=p.material_condition,
+            description=p.description,
+        )
+        return ToolResult(message=f"Added {p.tolerance_type} tolerance ({p.value}mm)", data=data)
+
+    def _handle_get_gdt(self, _p) -> ToolResult:
+        data = self._session.get_gdt()
+        return ToolResult(
+            message=f"GD&T: {data['datum_count']} datums, {data['tolerance_count']} tolerances",
+            data=data,
+        )
+
+    def _handle_suggest_gdt(self, _p) -> ToolResult:
+        data = self._session.suggest_gdt()
+        return ToolResult(
+            message=f"Suggested {data['datum_count']} datums, {data['tolerance_count']} tolerances",
+            data=data,
+        )
+
+    # ------------------------------------------------------------------
+    # TOPOLOGY OPTIMIZATION handlers
+    # ------------------------------------------------------------------
+
+    def _handle_add_load(self, p) -> ToolResult:
+        data = self._session.add_load(p.name, p.fx, p.fy, p.fz, p.px, p.py, p.pz)
+        mag = (p.fx ** 2 + p.fy ** 2 + p.fz ** 2) ** 0.5
+        return ToolResult(message=f"Added load '{p.name}' ({mag:.0f}N)", data=data)
+
+    def _handle_add_boundary_condition(self, p) -> ToolResult:
+        data = self._session.add_boundary_condition(p.name, p.bc_type, p.face_selector)
+        return ToolResult(message=f"Added BC '{p.name}' ({p.bc_type} on {p.face_selector})", data=data)
+
+    def _handle_run_topology_optimization(self, p) -> ToolResult:
+        data = self._session.run_topology_optimization(p.volume_fraction, p.resolution)
+        return ToolResult(
+            message=f"Topology optimization: {data['volume_reduction_pct']}% volume reduction",
+            data=data,
+        )
+
+    # ------------------------------------------------------------------
     # SESSION handlers
     # ------------------------------------------------------------------
 

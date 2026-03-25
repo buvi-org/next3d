@@ -116,6 +116,16 @@ class ModelingSession:
         # Parametric dimensions
         self._parameters: dict[str, dict[str, Any]] = {}  # name → {value, description}
 
+        # GD&T annotations per body
+        self._gdt: dict[str, Any] = {}  # body name → GDTAnnotationSet
+
+        # Active sketch (None when no sketch in progress)
+        self._active_sketch = None
+
+        # Topology optimization state
+        self._loads: list[Any] = []
+        self._boundary_conditions: list[Any] = []
+
         # Global operation log
         self._log = OperationLog()
 
@@ -606,6 +616,262 @@ class ModelingSession:
         return self._parameters[name]["value"]
 
     # ------------------------------------------------------------------
+    # GD&T ANNOTATIONS
+    # ------------------------------------------------------------------
+
+    def _get_gdt_set(self) -> Any:
+        """Get or create the GDT annotation set for the active body."""
+        from next3d.core.gdt import GDTAnnotationSet
+
+        name = self._active_body
+        if name not in self._gdt:
+            self._gdt[name] = GDTAnnotationSet()
+        return self._gdt[name]
+
+    def add_datum(
+        self,
+        label: str,
+        entity_id: str,
+        description: str = "",
+    ) -> dict[str, Any]:
+        """Add a datum reference to the active body's GD&T annotations.
+
+        Args:
+            label: Datum label (e.g. "A", "B", "C").
+            entity_id: persistent_id of the datum feature.
+            description: Optional description.
+        """
+        from next3d.core.gdt import create_datum
+
+        datum = create_datum(label, entity_id, description)
+        gdt_set = self._get_gdt_set()
+        gdt_set.datums.append(datum)
+
+        op = Operation(
+            op_type=OpType.ADD_DATUM,
+            params={"label": label, "entity_id": entity_id, "description": description},
+            description=f"Datum {label} on {entity_id}",
+        )
+        self._log.append(op)
+
+        return {
+            "label": label,
+            "entity_id": entity_id,
+            "total_datums": len(gdt_set.datums),
+            "body": self._active_body,
+        }
+
+    def add_tolerance(
+        self,
+        tolerance_type: str,
+        value: float,
+        entity_id: str,
+        datum_refs: list[str] | None = None,
+        material_condition: str = "",
+        description: str = "",
+    ) -> dict[str, Any]:
+        """Add a GD&T tolerance to the active body's annotations.
+
+        Args:
+            tolerance_type: One of the ToleranceType enum values.
+            value: Tolerance value in mm.
+            entity_id: persistent_id of the controlled feature.
+            datum_refs: Datum labels this tolerance references.
+            material_condition: "MMC", "LMC", "RFS", or "".
+            description: Optional description.
+        """
+        from next3d.core.gdt import create_tolerance
+
+        tol = create_tolerance(
+            tolerance_type, value, entity_id,
+            datum_refs=datum_refs,
+            material_condition=material_condition,
+            description=description,
+        )
+        gdt_set = self._get_gdt_set()
+        gdt_set.tolerances.append(tol)
+
+        op = Operation(
+            op_type=OpType.ADD_TOLERANCE,
+            params={
+                "tolerance_type": tolerance_type, "value": value,
+                "entity_id": entity_id, "datum_refs": datum_refs or [],
+                "material_condition": material_condition,
+                "description": description,
+            },
+            description=f"{tolerance_type} {value}mm on {entity_id}",
+        )
+        self._log.append(op)
+
+        return {
+            "tolerance_type": tolerance_type,
+            "value": value,
+            "entity_id": entity_id,
+            "total_tolerances": len(gdt_set.tolerances),
+            "body": self._active_body,
+        }
+
+    def get_gdt(self) -> dict[str, Any]:
+        """Get all GD&T annotations for the active body."""
+        from next3d.core.gdt import gdt_to_dict, validate_gdt
+
+        gdt_set = self._get_gdt_set()
+        result = gdt_to_dict(gdt_set)
+
+        # Include validation issues
+        graph = self.graph
+        issues = validate_gdt(gdt_set, graph)
+        result["validation_issues"] = issues
+        result["body"] = self._active_body
+
+        return result
+
+    def suggest_gdt(self) -> dict[str, Any]:
+        """Auto-suggest GD&T annotations based on current geometry."""
+        from next3d.core.gdt import suggest_gdt, gdt_to_dict
+
+        graph = self.graph
+        suggestions = suggest_gdt(graph)
+        result = gdt_to_dict(suggestions)
+        result["body"] = self._active_body
+        return result
+
+    # ------------------------------------------------------------------
+    # TOPOLOGY OPTIMIZATION
+    # ------------------------------------------------------------------
+
+    def add_load(
+        self,
+        name: str,
+        fx: float,
+        fy: float,
+        fz: float,
+        px: float,
+        py: float,
+        pz: float,
+    ) -> dict[str, Any]:
+        """Add a load case for topology optimization.
+
+        Args:
+            name: Load case name.
+            fx, fy, fz: Force components in Newtons.
+            px, py, pz: Application point coordinates.
+        """
+        from next3d.core.topology_opt import LoadCase
+
+        load = LoadCase(name=name, force=(fx, fy, fz), application_point=(px, py, pz))
+        self._loads.append(load)
+
+        op = Operation(
+            op_type=OpType.ADD_LOAD,
+            params={"name": name, "fx": fx, "fy": fy, "fz": fz, "px": px, "py": py, "pz": pz},
+            description=f"Load '{name}': ({fx},{fy},{fz})N at ({px},{py},{pz})",
+        )
+        self._log.append(op)
+
+        return {
+            "name": name,
+            "force": {"x": fx, "y": fy, "z": fz},
+            "application_point": {"x": px, "y": py, "z": pz},
+            "total_loads": len(self._loads),
+        }
+
+    def add_boundary_condition(
+        self,
+        name: str,
+        bc_type: str,
+        face_selector: str,
+    ) -> dict[str, Any]:
+        """Add a boundary condition for topology optimization.
+
+        Args:
+            name: Boundary condition name.
+            bc_type: Type — "fixed", "pinned", or "roller".
+            face_selector: CadQuery face selector (">Z", "<Z", etc.).
+        """
+        from next3d.core.topology_opt import BoundaryCondition
+
+        valid_types = ("fixed", "pinned", "roller")
+        if bc_type not in valid_types:
+            raise ModelingError(
+                f"Invalid BC type '{bc_type}'. Use: {', '.join(valid_types)}"
+            )
+
+        bc = BoundaryCondition(name=name, bc_type=bc_type, face_selector=face_selector)
+        self._boundary_conditions.append(bc)
+
+        op = Operation(
+            op_type=OpType.ADD_BOUNDARY_CONDITION,
+            params={"name": name, "bc_type": bc_type, "face_selector": face_selector},
+            description=f"BC '{name}': {bc_type} on {face_selector}",
+        )
+        self._log.append(op)
+
+        return {
+            "name": name,
+            "bc_type": bc_type,
+            "face_selector": face_selector,
+            "total_boundary_conditions": len(self._boundary_conditions),
+        }
+
+    def run_topology_optimization(
+        self,
+        volume_fraction: float = 0.3,
+        resolution: int = 10,
+    ) -> dict[str, Any]:
+        """Run topology optimization on the active body.
+
+        Args:
+            volume_fraction: Target volume fraction (0.3 = keep 30%).
+            resolution: Voxel grid resolution along longest axis.
+
+        Returns:
+            Dict with optimization results including volume reduction,
+            removal regions, density field, and suggestions.
+        """
+        from next3d.core.topology_opt import setup_optimization, run_optimization
+
+        shape = self._require_shape()
+
+        if not self._loads:
+            raise ModelingError("No loads defined. Use add_load() first.")
+        if not self._boundary_conditions:
+            raise ModelingError(
+                "No boundary conditions defined. Use add_boundary_condition() first."
+            )
+
+        setup = setup_optimization(
+            loads=self._loads,
+            constraints=self._boundary_conditions,
+            volume_fraction=volume_fraction,
+        )
+
+        result = run_optimization(shape, setup, resolution=resolution)
+
+        op = Operation(
+            op_type=OpType.RUN_TOPOLOGY_OPT,
+            params={
+                "volume_fraction": volume_fraction,
+                "resolution": resolution,
+            },
+            description=f"Topology opt: {result.volume_reduction_pct}% reduction",
+        )
+        self._log.append(op)
+
+        return {
+            "original_volume": result.original_volume,
+            "optimized_volume": result.optimized_volume,
+            "volume_reduction_pct": result.volume_reduction_pct,
+            "removal_regions_count": len(result.removal_regions),
+            "total_voxels": len(result.density_field),
+            "kept_voxels": len(result.density_field) - len(result.removal_regions),
+            "removal_regions": result.removal_regions,
+            "density_field": result.density_field,
+            "suggestions": result.suggestions,
+            "body": self._active_body,
+        }
+
+    # ------------------------------------------------------------------
     # LOAD / EXPORT
     # ------------------------------------------------------------------
 
@@ -969,6 +1235,145 @@ class ModelingSession:
             description=f"Draft {angle_degrees}°",
         )
         return self._apply(shape, op)
+
+    # ------------------------------------------------------------------
+    # SKETCH operations
+    # ------------------------------------------------------------------
+
+    def create_sketch(self, plane: str = "XY") -> dict[str, Any]:
+        """Start a new 2D sketch on the given plane.
+
+        Args:
+            plane: Sketch plane — "XY", "XZ", or "YZ".
+        """
+        from next3d.core.sketch import Sketch
+        self._active_sketch = Sketch(plane=plane)
+        op = Operation(
+            op_type=OpType.CREATE_SKETCH,
+            params={"plane": plane},
+            description=f"Sketch on {plane}",
+        )
+        self._log.append(op)
+        return {"plane": plane, "status": "sketch_active"}
+
+    def sketch_add_line(
+        self, x1: float, y1: float, x2: float, y2: float,
+    ) -> dict[str, Any]:
+        """Add a line to the active sketch."""
+        sketch = self._require_sketch()
+        eid = sketch.add_line(x1, y1, x2, y2)
+        op = Operation(
+            op_type=OpType.SKETCH_ADD_LINE,
+            params={"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+            description=f"Line ({x1},{y1})->({x2},{y2})",
+        )
+        self._log.append(op)
+        return {"entity_id": eid, "entity_count": len(sketch.entities)}
+
+    def sketch_add_arc(
+        self,
+        cx: float,
+        cy: float,
+        radius: float,
+        start_angle: float,
+        end_angle: float,
+    ) -> dict[str, Any]:
+        """Add an arc to the active sketch."""
+        sketch = self._require_sketch()
+        eid = sketch.add_arc(cx, cy, radius, start_angle, end_angle)
+        op = Operation(
+            op_type=OpType.SKETCH_ADD_ARC,
+            params={"cx": cx, "cy": cy, "radius": radius,
+                    "start_angle": start_angle, "end_angle": end_angle},
+            description=f"Arc center=({cx},{cy}) r={radius}",
+        )
+        self._log.append(op)
+        return {"entity_id": eid, "entity_count": len(sketch.entities)}
+
+    def sketch_add_circle(
+        self, cx: float, cy: float, radius: float,
+    ) -> dict[str, Any]:
+        """Add a circle to the active sketch."""
+        sketch = self._require_sketch()
+        eid = sketch.add_circle(cx, cy, radius)
+        op = Operation(
+            op_type=OpType.SKETCH_ADD_CIRCLE,
+            params={"cx": cx, "cy": cy, "radius": radius},
+            description=f"Circle center=({cx},{cy}) r={radius}",
+        )
+        self._log.append(op)
+        return {"entity_id": eid, "entity_count": len(sketch.entities)}
+
+    def sketch_add_rect(
+        self, cx: float, cy: float, width: float, height: float,
+    ) -> dict[str, Any]:
+        """Add a rectangle to the active sketch."""
+        sketch = self._require_sketch()
+        eid = sketch.add_rect(cx, cy, width, height)
+        op = Operation(
+            op_type=OpType.SKETCH_ADD_RECT,
+            params={"cx": cx, "cy": cy, "width": width, "height": height},
+            description=f"Rect center=({cx},{cy}) {width}x{height}",
+        )
+        self._log.append(op)
+        return {"entity_id": eid, "entity_count": len(sketch.entities)}
+
+    def sketch_add_constraint(
+        self,
+        constraint_type: str,
+        entity_a: str,
+        entity_b: str | None = None,
+        value: float | None = None,
+    ) -> dict[str, Any]:
+        """Add a constraint to the active sketch."""
+        sketch = self._require_sketch()
+        cid = sketch.add_constraint(constraint_type, entity_a, entity_b, value)
+        op = Operation(
+            op_type=OpType.SKETCH_ADD_CONSTRAINT,
+            params={"constraint_type": constraint_type, "entity_a": entity_a,
+                    "entity_b": entity_b, "value": value},
+            description=f"Constraint {constraint_type}",
+        )
+        self._log.append(op)
+        return {"constraint_id": cid, "constraint_count": len(sketch.constraints)}
+
+    def sketch_extrude(self, height: float) -> dict[str, Any]:
+        """Extrude the active sketch to create/replace the active body."""
+        sketch = self._require_sketch()
+        shape = sketch.extrude(height)
+        op = Operation(
+            op_type=OpType.SKETCH_EXTRUDE,
+            params={"height": height},
+            description=f"Sketch extrude h={height}",
+        )
+        self._active_sketch = None
+        return self._apply(shape, op)
+
+    def sketch_revolve(
+        self,
+        angle_degrees: float = 360.0,
+        axis_origin: tuple[float, float] = (0, 0),
+        axis_direction: tuple[float, float] = (0, 1),
+    ) -> dict[str, Any]:
+        """Revolve the active sketch to create/replace the active body."""
+        sketch = self._require_sketch()
+        shape = sketch.revolve(angle_degrees, axis_origin, axis_direction)
+        op = Operation(
+            op_type=OpType.SKETCH_REVOLVE,
+            params={"angle_degrees": angle_degrees,
+                    "axis_origin": list(axis_origin),
+                    "axis_direction": list(axis_direction)},
+            description=f"Sketch revolve {angle_degrees}°",
+        )
+        self._active_sketch = None
+        return self._apply(shape, op)
+
+    def _require_sketch(self):
+        """Return the active sketch or raise."""
+        sketch = getattr(self, "_active_sketch", None)
+        if sketch is None:
+            raise ModelingError("No active sketch. Call create_sketch first.")
+        return sketch
 
     # ------------------------------------------------------------------
     # BOOLEAN operations

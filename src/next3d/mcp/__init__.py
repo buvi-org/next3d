@@ -930,9 +930,312 @@ def add_mate_constraint(
 
 
 @mcp.tool()
+def create_sketch(plane: str = "XY") -> str:
+    """Start a new 2D sketch on a plane. Required before adding sketch entities.
+
+    Args:
+        plane: Sketch plane — "XY", "XZ", or "YZ"
+    """
+    r = _executor.call("create_sketch", {"plane": plane})
+    return _format_result(r)
+
+
+@mcp.tool()
+def sketch_add_line(
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+) -> str:
+    """Add a line segment to the active sketch.
+
+    Args:
+        x1: Start X coordinate
+        y1: Start Y coordinate
+        x2: End X coordinate
+        y2: End Y coordinate
+    """
+    r = _executor.call("sketch_add_line", {
+        "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def sketch_add_arc(
+    cx: float,
+    cy: float,
+    radius: float,
+    start_angle: float,
+    end_angle: float,
+) -> str:
+    """Add a circular arc to the active sketch.
+
+    Args:
+        cx: Arc center X
+        cy: Arc center Y
+        radius: Arc radius in mm
+        start_angle: Start angle in degrees
+        end_angle: End angle in degrees
+    """
+    r = _executor.call("sketch_add_arc", {
+        "cx": cx, "cy": cy, "radius": radius,
+        "start_angle": start_angle, "end_angle": end_angle,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def sketch_add_circle(
+    radius: float,
+    cx: float = 0,
+    cy: float = 0,
+) -> str:
+    """Add a full circle to the active sketch.
+
+    Args:
+        radius: Circle radius in mm
+        cx: Circle center X
+        cy: Circle center Y
+    """
+    r = _executor.call("sketch_add_circle", {
+        "cx": cx, "cy": cy, "radius": radius,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def sketch_add_rect(
+    width: float,
+    height: float,
+    cx: float = 0,
+    cy: float = 0,
+) -> str:
+    """Add a rectangle to the active sketch.
+
+    Args:
+        width: Rectangle width in mm
+        height: Rectangle height in mm
+        cx: Rectangle center X
+        cy: Rectangle center Y
+    """
+    r = _executor.call("sketch_add_rect", {
+        "cx": cx, "cy": cy, "width": width, "height": height,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def sketch_add_constraint(
+    constraint_type: str,
+    entity_a: str,
+    entity_b: str | None = None,
+    value: float | None = None,
+) -> str:
+    """Add a geometric or dimensional constraint to the active sketch.
+
+    Args:
+        constraint_type: coincident, tangent, parallel, perpendicular, equal_length, horizontal, vertical, fixed, concentric, distance, angle, radius, diameter
+        entity_a: ID of the first entity
+        entity_b: ID of the second entity (optional)
+        value: Dimensional value (for distance, angle, radius, diameter constraints)
+    """
+    r = _executor.call("sketch_add_constraint", {
+        "constraint_type": constraint_type, "entity_a": entity_a,
+        "entity_b": entity_b, "value": value,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def sketch_extrude(height: float) -> str:
+    """Extrude the active sketch to create a solid.
+
+    Args:
+        height: Extrusion height in mm
+    """
+    r = _executor.call("sketch_extrude", {"height": height})
+    return _format_result(r)
+
+
+@mcp.tool()
+def sketch_revolve(
+    angle_degrees: float = 360.0,
+    axis_origin_x: float = 0,
+    axis_origin_y: float = 0,
+    axis_direction_x: float = 0,
+    axis_direction_y: float = 1,
+) -> str:
+    """Revolve the active sketch around an axis to create a solid.
+
+    Args:
+        angle_degrees: Revolution angle (360 = full revolution)
+        axis_origin_x: X of a point on the revolution axis
+        axis_origin_y: Y of a point on the revolution axis
+        axis_direction_x: X component of axis direction
+        axis_direction_y: Y component of axis direction
+    """
+    r = _executor.call("sketch_revolve", {
+        "angle_degrees": angle_degrees,
+        "axis_origin_x": axis_origin_x, "axis_origin_y": axis_origin_y,
+        "axis_direction_x": axis_direction_x, "axis_direction_y": axis_direction_y,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
 def undo() -> str:
     """Undo the last modeling operation."""
     r = _executor.call("undo", {})
+    return _format_result(r)
+
+
+# ---------------------------------------------------------------------------
+# GD&T tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def add_datum(
+    label: str,
+    entity_id: str,
+    description: str = "",
+) -> str:
+    """Add a GD&T datum reference to the active body.
+
+    Datums are labeled reference features (A, B, C) used as the basis
+    for geometric tolerancing per ASME Y14.5 / ISO 1101.
+
+    Args:
+        label: Datum label — single uppercase letter (e.g. 'A', 'B', 'C')
+        entity_id: Persistent ID of the datum feature (face or edge)
+        description: Human-readable description of the datum
+    """
+    r = _executor.call("add_datum", {
+        "label": label, "entity_id": entity_id, "description": description,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def add_tolerance(
+    tolerance_type: str,
+    value: float,
+    entity_id: str,
+    datum_refs: list[str] | None = None,
+    material_condition: str = "",
+    description: str = "",
+) -> str:
+    """Add a GD&T tolerance zone to the active body.
+
+    Args:
+        tolerance_type: flatness, straightness, circularity, cylindricity,
+            parallelism, perpendicularity, angularity, position, concentricity,
+            symmetry, circular_runout, total_runout, profile_of_line, profile_of_surface
+        value: Tolerance value in mm
+        entity_id: Persistent ID of the controlled feature
+        datum_refs: Datum labels this tolerance references (e.g. ['A', 'B'])
+        material_condition: 'MMC', 'LMC', 'RFS', or '' (none)
+        description: Human-readable description
+    """
+    r = _executor.call("add_tolerance", {
+        "tolerance_type": tolerance_type, "value": value,
+        "entity_id": entity_id, "datum_refs": datum_refs or [],
+        "material_condition": material_condition, "description": description,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def get_gdt() -> str:
+    """Get all GD&T annotations (datums and tolerances) for the active body."""
+    r = _executor.call("get_gdt", {})
+    return _format_result(r)
+
+
+@mcp.tool()
+def suggest_gdt() -> str:
+    """Auto-suggest GD&T annotations based on feature analysis.
+
+    Analyzes through holes, planar faces, cylindrical surfaces, etc.
+    and suggests datums and tolerances per common engineering practice.
+    """
+    r = _executor.call("suggest_gdt", {})
+    return _format_result(r)
+
+
+# ---------------------------------------------------------------------------
+# TOPOLOGY OPTIMIZATION tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def add_load(
+    name: str,
+    fx: float = 0,
+    fy: float = 0,
+    fz: float = 0,
+    px: float = 0,
+    py: float = 0,
+    pz: float = 0,
+) -> str:
+    """Add a load case for topology optimization.
+
+    Define a force vector applied at a specific point. Multiple loads
+    can be added before running optimization.
+
+    Args:
+        name: Load case name (e.g. 'downward_force')
+        fx: Force X component in Newtons
+        fy: Force Y component in Newtons
+        fz: Force Z component in Newtons
+        px: Application point X coordinate
+        py: Application point Y coordinate
+        pz: Application point Z coordinate
+    """
+    r = _executor.call("add_load", {
+        "name": name, "fx": fx, "fy": fy, "fz": fz,
+        "px": px, "py": py, "pz": pz,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def add_boundary_condition(
+    name: str,
+    bc_type: str,
+    face_selector: str,
+) -> str:
+    """Add a boundary condition (support) for topology optimization.
+
+    At least one BC is required before running optimization.
+
+    Args:
+        name: BC name (e.g. 'fixed_base')
+        bc_type: Constraint type — "fixed", "pinned", or "roller"
+        face_selector: CadQuery face selector (>Z=top, <Z=bottom, >X=right, etc.)
+    """
+    r = _executor.call("add_boundary_condition", {
+        "name": name, "bc_type": bc_type, "face_selector": face_selector,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def run_topology_optimization(
+    volume_fraction: float = 0.3,
+    resolution: int = 10,
+) -> str:
+    """Run topology optimization on the active body.
+
+    Requires loads and boundary conditions to be defined first.
+    Uses a simplified SIMP-like approach to identify material for removal.
+
+    Args:
+        volume_fraction: Target volume fraction (0.3 = keep 30% of material)
+        resolution: Voxel grid resolution (higher = more detail, slower). Range 3-50.
+    """
+    r = _executor.call("run_topology_optimization", {
+        "volume_fraction": volume_fraction, "resolution": resolution,
+    })
     return _format_result(r)
 
 

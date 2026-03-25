@@ -479,6 +479,196 @@ class AddMateConstraint(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# SKETCH tools
+# ---------------------------------------------------------------------------
+
+class CreateSketch(BaseModel):
+    """Start a new 2D sketch on a plane. Required before adding sketch entities."""
+
+    plane: Literal["XY", "XZ", "YZ"] = Field("XY", description="Sketch plane")
+
+
+class SketchAddLine(BaseModel):
+    """Add a line segment to the active sketch."""
+
+    x1: float = Field(..., description="Start X coordinate")
+    y1: float = Field(..., description="Start Y coordinate")
+    x2: float = Field(..., description="End X coordinate")
+    y2: float = Field(..., description="End Y coordinate")
+
+
+class SketchAddArc(BaseModel):
+    """Add a circular arc to the active sketch."""
+
+    cx: float = Field(..., description="Arc center X")
+    cy: float = Field(..., description="Arc center Y")
+    radius: float = Field(..., description="Arc radius in mm", gt=0)
+    start_angle: float = Field(..., description="Start angle in degrees")
+    end_angle: float = Field(..., description="End angle in degrees")
+
+
+class SketchAddCircle(BaseModel):
+    """Add a full circle to the active sketch."""
+
+    cx: float = Field(0, description="Circle center X")
+    cy: float = Field(0, description="Circle center Y")
+    radius: float = Field(..., description="Circle radius in mm", gt=0)
+
+
+class SketchAddRect(BaseModel):
+    """Add a rectangle to the active sketch."""
+
+    cx: float = Field(0, description="Rectangle center X")
+    cy: float = Field(0, description="Rectangle center Y")
+    width: float = Field(..., description="Rectangle width in mm", gt=0)
+    height: float = Field(..., description="Rectangle height in mm", gt=0)
+
+
+class SketchAddConstraint(BaseModel):
+    """Add a geometric or dimensional constraint to the active sketch.
+
+    Geometric: coincident, tangent, parallel, perpendicular, equal_length,
+    horizontal, vertical, fixed, concentric.
+    Dimensional: distance, angle, radius, diameter."""
+
+    constraint_type: str = Field(
+        ...,
+        description="Constraint type: coincident, tangent, parallel, perpendicular, "
+                    "equal_length, horizontal, vertical, fixed, concentric, "
+                    "distance, angle, radius, diameter",
+    )
+    entity_a: str = Field(..., description="ID of the first entity")
+    entity_b: str | None = Field(None, description="ID of the second entity (optional)")
+    value: float | None = Field(None, description="Dimensional value (for distance, angle, radius, diameter)")
+
+
+class SketchExtrude(BaseModel):
+    """Extrude the active sketch to create a solid."""
+
+    height: float = Field(..., description="Extrusion height in mm", gt=0)
+
+
+class SketchRevolve(BaseModel):
+    """Revolve the active sketch around an axis to create a solid."""
+
+    angle_degrees: float = Field(360.0, description="Revolution angle in degrees", gt=0, le=360)
+    axis_origin_x: float = Field(0, description="X of a point on the revolution axis")
+    axis_origin_y: float = Field(0, description="Y of a point on the revolution axis")
+    axis_direction_x: float = Field(0, description="X component of axis direction")
+    axis_direction_y: float = Field(1, description="Y component of axis direction")
+
+
+# ---------------------------------------------------------------------------
+# GD&T tools
+# ---------------------------------------------------------------------------
+
+class AddDatum(BaseModel):
+    """Add a GD&T datum reference to the active body.
+
+    Datums are labeled reference features (A, B, C) used as the basis
+    for geometric tolerancing per ASME Y14.5 / ISO 1101."""
+
+    label: str = Field(..., description="Datum label — single uppercase letter (e.g. 'A', 'B', 'C')")
+    entity_id: str = Field(..., description="Persistent ID of the datum feature (face or edge)")
+    description: str = Field("", description="Human-readable description of the datum")
+
+
+class AddTolerance(BaseModel):
+    """Add a GD&T tolerance zone to the active body.
+
+    Defines a geometric tolerance (flatness, position, perpendicularity, etc.)
+    on a feature, optionally referencing datums."""
+
+    tolerance_type: str = Field(
+        ...,
+        description=(
+            "Tolerance type: flatness, straightness, circularity, cylindricity, "
+            "parallelism, perpendicularity, angularity, position, concentricity, "
+            "symmetry, circular_runout, total_runout, profile_of_line, profile_of_surface"
+        ),
+    )
+    value: float = Field(..., description="Tolerance value in mm", gt=0)
+    entity_id: str = Field(..., description="Persistent ID of the controlled feature")
+    datum_refs: list[str] = Field(
+        default_factory=list,
+        description="Datum labels this tolerance references (e.g. ['A', 'B'])",
+    )
+    material_condition: str = Field(
+        "",
+        description="Material condition modifier: 'MMC', 'LMC', 'RFS', or '' (none)",
+    )
+    description: str = Field("", description="Human-readable description")
+
+
+class GetGDT(BaseModel):
+    """Get all GD&T annotations (datums and tolerances) for the active body."""
+    pass
+
+
+class SuggestGDT(BaseModel):
+    """Auto-suggest GD&T annotations based on feature analysis.
+
+    Analyzes through holes, planar faces, cylindrical surfaces, etc.
+    and suggests appropriate datums and tolerances per common engineering practice."""
+    pass
+
+
+# ---------------------------------------------------------------------------
+# TOPOLOGY OPTIMIZATION tools
+# ---------------------------------------------------------------------------
+
+class AddLoad(BaseModel):
+    """Add a load case for topology optimization.
+
+    Define a force vector applied at a specific point on the geometry.
+    Multiple loads can be added before running optimization."""
+
+    name: str = Field(..., description="Load case name (e.g. 'downward_force', 'lateral_push')")
+    fx: float = Field(0, description="Force X component in Newtons")
+    fy: float = Field(0, description="Force Y component in Newtons")
+    fz: float = Field(0, description="Force Z component in Newtons")
+    px: float = Field(0, description="Application point X coordinate")
+    py: float = Field(0, description="Application point Y coordinate")
+    pz: float = Field(0, description="Application point Z coordinate")
+
+
+class AddBoundaryCondition(BaseModel):
+    """Add a boundary condition (support) for topology optimization.
+
+    Define how the geometry is constrained. At least one BC is required
+    before running optimization."""
+
+    name: str = Field(..., description="Boundary condition name (e.g. 'fixed_base', 'roller_support')")
+    bc_type: Literal["fixed", "pinned", "roller"] = Field(
+        ..., description="Constraint type: fixed (no movement), pinned (no translation), roller (slides in one direction)",
+    )
+    face_selector: str = Field(
+        ..., description="CadQuery face selector for the constrained face (>Z=top, <Z=bottom, >X=right, etc.)",
+    )
+
+
+class RunTopologyOptimization(BaseModel):
+    """Run topology optimization on the active body.
+
+    Requires at least one load and one boundary condition to be defined first.
+    Uses a simplified SIMP-like approach with distance-based stress heuristics
+    to identify material that can be removed."""
+
+    volume_fraction: float = Field(
+        0.3,
+        description="Target volume fraction — 0.3 means keep 30% of material. Range: 0.01 to 0.99.",
+        gt=0,
+        lt=1,
+    )
+    resolution: int = Field(
+        10,
+        description="Voxel grid resolution along longest axis. Higher = more detail but slower. Range: 3 to 50.",
+        ge=3,
+        le=50,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Tool registry
 # ---------------------------------------------------------------------------
 
@@ -529,6 +719,24 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "get_bom": GetBom,
     "add_standard_part": AddStandardPart,
     "export_assembly": ExportAssembly,
+    # Sketch
+    "create_sketch": CreateSketch,
+    "sketch_add_line": SketchAddLine,
+    "sketch_add_arc": SketchAddArc,
+    "sketch_add_circle": SketchAddCircle,
+    "sketch_add_rect": SketchAddRect,
+    "sketch_add_constraint": SketchAddConstraint,
+    "sketch_extrude": SketchExtrude,
+    "sketch_revolve": SketchRevolve,
+    # GD&T
+    "add_datum": AddDatum,
+    "add_tolerance": AddTolerance,
+    "get_gdt": GetGDT,
+    "suggest_gdt": SuggestGDT,
+    # Topology optimization
+    "add_load": AddLoad,
+    "add_boundary_condition": AddBoundaryCondition,
+    "run_topology_optimization": RunTopologyOptimization,
     # Session
     "undo": Undo,
     "export_step": ExportStep,
