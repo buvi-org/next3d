@@ -302,6 +302,44 @@ class ToolExecutor:
     # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
+    # DIMENSION & DRAWING handlers
+    # ------------------------------------------------------------------
+
+    def _handle_add_dimension(self, p) -> ToolResult:
+        data = self._session.add_dimension(
+            p.dim_type, p.value, p.entity_ids, p.label,
+            p.tolerance_plus, p.tolerance_minus,
+        )
+        return ToolResult(message=f"Added {p.dim_type} dimension: {p.value}", data=data)
+
+    def _handle_get_dimensions(self, _p) -> ToolResult:
+        data = self._session.get_dimensions()
+        return ToolResult(message=f"{data['count']} dimensions", data=data)
+
+    def _handle_auto_dimension(self, _p) -> ToolResult:
+        data = self._session.auto_dimension()
+        return ToolResult(message=f"Auto-generated {data['count']} dimensions", data=data)
+
+    def _handle_export_drawing(self, p) -> ToolResult:
+        self._session.export_drawing(
+            p.output_path, p.views, p.title, p.show_hidden,
+            p.page_width, p.page_height,
+        )
+        return ToolResult(message=f"Drawing exported to {p.output_path}")
+
+    def _handle_export_section_drawing(self, p) -> ToolResult:
+        self._session.export_section_drawing(
+            p.output_path, p.section_plane, p.section_offset, p.title,
+        )
+        return ToolResult(message=f"Section drawing exported to {p.output_path}")
+
+    def _handle_export_dxf(self, p) -> ToolResult:
+        self._session.export_dxf(
+            p.output_path, (p.projection_dir_x, p.projection_dir_y, p.projection_dir_z),
+        )
+        return ToolResult(message=f"DXF exported to {p.output_path}")
+
+    # ------------------------------------------------------------------
     # DESIGN INTELLIGENCE handlers
     # ------------------------------------------------------------------
 

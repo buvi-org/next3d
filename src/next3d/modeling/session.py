@@ -1038,6 +1038,139 @@ class ModelingSession:
         }
 
     # ------------------------------------------------------------------
+    # DIMENSIONS
+    # ------------------------------------------------------------------
+
+    def add_dimension(
+        self,
+        dim_type: str,
+        value: float,
+        entity_ids: list[str] | None = None,
+        label: str = "",
+        tolerance_plus: float = 0.0,
+        tolerance_minus: float = 0.0,
+    ) -> dict[str, Any]:
+        """Add a dimension annotation to the active body."""
+        from next3d.core.dimensions import DimensionSet
+        name = self._active_body
+        if not hasattr(self, '_dimensions'):
+            self._dimensions: dict[str, DimensionSet] = {}
+        if name not in self._dimensions:
+            self._dimensions[name] = DimensionSet()
+
+        dim = self._dimensions[name].add(
+            dim_type, value, entity_ids or [], label,
+            tolerance_plus, tolerance_minus,
+        )
+        return dim.to_dict()
+
+    def get_dimensions(self) -> dict[str, Any]:
+        """Get all dimensions on the active body."""
+        if not hasattr(self, '_dimensions'):
+            self._dimensions: dict[str, DimensionSet] = {}
+        name = self._active_body
+        ds = self._dimensions.get(name)
+        if ds is None:
+            return {"count": 0, "dimensions": []}
+        return ds.to_dict()
+
+    def auto_dimension(self) -> dict[str, Any]:
+        """Auto-generate dimensions from feature analysis."""
+        from next3d.core.dimensions import auto_dimension
+        g = self.graph
+        dims = auto_dimension(g)
+        return {
+            "count": len(dims),
+            "dimensions": [d.to_dict() for d in dims],
+        }
+
+    # ------------------------------------------------------------------
+    # ENGINEERING DRAWINGS
+    # ------------------------------------------------------------------
+
+    def generate_drawing(
+        self,
+        views: list[str] | None = None,
+        title: str = "",
+        show_hidden: bool = True,
+    ) -> dict[str, Any]:
+        """Generate a multi-view engineering drawing of the active body.
+
+        Args:
+            views: View names (front, top, right, left, back, bottom, isometric, dimetric).
+                   Default: front + top + right + isometric.
+            title: Drawing title.
+            show_hidden: Show hidden lines.
+        """
+        from next3d.core.drawing import generate_drawing
+        shape = self._require_shape()
+        drawing = generate_drawing(shape, views, title, show_hidden=show_hidden)
+        return {
+            "view_count": len(drawing.views),
+            "views": [v.config.to_dict() for v in drawing.views],
+            "title": drawing.title,
+        }
+
+    def export_drawing(
+        self,
+        path: str,
+        views: list[str] | None = None,
+        title: str = "",
+        show_hidden: bool = True,
+        page_width: int = 1200,
+        page_height: int = 800,
+    ) -> None:
+        """Export a multi-view engineering drawing as SVG.
+
+        Args:
+            path: Output SVG file path.
+            views: View names. Default: front + top + right + isometric.
+            title: Drawing title.
+            show_hidden: Show hidden lines.
+            page_width: Page width in pixels.
+            page_height: Page height in pixels.
+        """
+        from next3d.core.drawing import generate_drawing, export_drawing
+        shape = self._require_shape()
+        drawing = generate_drawing(shape, views, title, show_hidden=show_hidden)
+        export_drawing(drawing, path, page_width, page_height)
+
+    def export_section_drawing(
+        self,
+        path: str,
+        section_plane: str = "XZ",
+        section_offset: float = 0.0,
+        title: str = "",
+    ) -> None:
+        """Export a cross-section drawing as SVG.
+
+        Args:
+            path: Output SVG file path.
+            section_plane: "XY", "XZ", or "YZ".
+            section_offset: Offset along plane normal in mm.
+            title: Drawing title.
+        """
+        from next3d.core.drawing import generate_section_drawing, export_drawing
+        shape = self._require_shape()
+        drawing = generate_section_drawing(shape, section_plane, section_offset, title)
+        export_drawing(drawing, path)
+
+    def export_dxf(
+        self,
+        path: str,
+        projection_dir: tuple[float, float, float] = (0, 0, 1),
+    ) -> None:
+        """Export a 2D projected view as DXF.
+
+        Args:
+            path: Output DXF file path.
+            projection_dir: Projection direction.
+        """
+        from next3d.core.drawing import export_view_dxf
+        shape = self._require_shape()
+        export_view_dxf(shape, path, projection_dir)
+
+    # ------------------------------------------------------------------
     # FEA — Finite Element Analysis
     # ------------------------------------------------------------------
 

@@ -476,6 +476,90 @@ class TestParametricDimensions:
         assert "operations" in r.data
 
 
+class TestDimensions:
+    def test_add_dimension(self):
+        s = ModelingSession()
+        s.create_box(100, 60, 20)
+        d = s.add_dimension("linear", 100.0, label="Overall length")
+        assert d["type"] == "linear"
+        assert d["value"] == 100.0
+
+    def test_get_dimensions(self):
+        s = ModelingSession()
+        s.create_box(100, 60, 20)
+        s.add_dimension("linear", 100.0, label="Length")
+        s.add_dimension("linear", 60.0, label="Width")
+        result = s.get_dimensions()
+        assert result["count"] == 2
+
+    def test_dimension_with_tolerance(self):
+        s = ModelingSession()
+        s.create_box(100, 60, 20)
+        d = s.add_dimension("diametral", 10.0, tolerance_plus=0.05, tolerance_minus=0.02)
+        assert d["tolerance"]["plus"] == 0.05
+        assert d["tolerance"]["minus"] == 0.02
+
+    def test_auto_dimension(self):
+        s = ModelingSession()
+        s.create_box(100, 60, 20)
+        s.add_hole(0, 0, 10)
+        result = s.auto_dimension()
+        assert result["count"] > 0
+        # Should find the hole diameter
+        types = [d["type"] for d in result["dimensions"]]
+        assert "diametral" in types
+
+    def test_dimension_via_executor(self):
+        ex = ToolExecutor()
+        ex.call("create_box", {"length": 100, "width": 60, "height": 20})
+        r = ex.call("add_dimension", {"dim_type": "linear", "value": 100.0, "label": "L"})
+        assert r.success
+        r = ex.call("get_dimensions", {})
+        assert r.data["count"] == 1
+
+
+class TestDrawings:
+    def test_export_drawing(self, tmp_path):
+        s = ModelingSession()
+        s.create_box(100, 60, 20)
+        out = str(tmp_path / "drawing.svg")
+        s.export_drawing(out, views=["front", "top"], title="Test Box")
+        assert Path(out).exists()
+        content = Path(out).read_text()
+        assert "<svg" in content
+        assert "Test Box" in content
+
+    def test_export_section_drawing(self, tmp_path):
+        s = ModelingSession()
+        s.create_box(100, 60, 20)
+        s.add_hole(0, 0, 10)
+        out = str(tmp_path / "section.svg")
+        s.export_section_drawing(out, section_plane="XZ", title="Section View")
+        assert Path(out).exists()
+
+    def test_export_drawing_via_executor(self, tmp_path):
+        ex = ToolExecutor()
+        ex.call("create_box", {"length": 100, "width": 60, "height": 20})
+        out = str(tmp_path / "exec_drawing.svg")
+        r = ex.call("export_drawing", {
+            "output_path": out,
+            "views": ["front", "right", "isometric"],
+            "title": "Bracket Drawing",
+        })
+        assert r.success
+        assert Path(out).exists()
+
+    def test_all_standard_views(self, tmp_path):
+        """All 8 standard views should render without error."""
+        s = ModelingSession()
+        s.create_box(50, 30, 20)
+        out = str(tmp_path / "all_views.svg")
+        s.export_drawing(out, views=[
+            "front", "back", "top", "bottom", "right", "left", "isometric", "dimetric",
+        ])
+        assert Path(out).exists()
+
+
 class TestFEA:
     def test_plain_plate_fea(self):
         """FEA on a plain plate without stiffeners."""

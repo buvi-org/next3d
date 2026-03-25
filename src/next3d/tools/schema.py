@@ -463,6 +463,65 @@ class GetParametricState(BaseModel):
     pass
 
 
+class AddDimension(BaseModel):
+    """Add a dimension annotation to the active body."""
+
+    dim_type: Literal["linear", "radial", "diametral", "angular"] = Field(
+        ..., description="Dimension type",
+    )
+    value: float = Field(..., description="Measured value in mm (or degrees for angular)")
+    entity_ids: list[str] = Field(default_factory=list, description="Persistent IDs of referenced entities")
+    label: str = Field("", description="Display label (e.g. '⌀10', 'R5')")
+    tolerance_plus: float = Field(0, description="Plus tolerance")
+    tolerance_minus: float = Field(0, description="Minus tolerance")
+
+
+class GetDimensions(BaseModel):
+    """Get all dimension annotations on the active body."""
+    pass
+
+
+class AutoDimension(BaseModel):
+    """Auto-generate key dimensions from feature analysis (hole diameters, fillet radii, etc.)."""
+    pass
+
+
+class ExportDrawing(BaseModel):
+    """Export a multi-view engineering drawing as SVG.
+
+    Generates orthographic projections with hidden lines, laid out on a drawing sheet."""
+
+    output_path: str = Field(..., description="Output SVG file path")
+    views: list[str] = Field(
+        default_factory=lambda: ["front", "top", "right", "isometric"],
+        description="View names: front, top, right, left, back, bottom, isometric, dimetric",
+    )
+    title: str = Field("", description="Drawing title")
+    show_hidden: bool = Field(True, description="Show hidden lines (dashed)")
+    page_width: int = Field(1200, description="Page width in pixels")
+    page_height: int = Field(800, description="Page height in pixels")
+
+
+class ExportSectionDrawing(BaseModel):
+    """Export a cross-section drawing as SVG.
+
+    Cuts the part along a plane to reveal internal geometry."""
+
+    output_path: str = Field(..., description="Output SVG file path")
+    section_plane: Literal["XY", "XZ", "YZ"] = Field("XZ", description="Section cut plane")
+    section_offset: float = Field(0, description="Offset along plane normal in mm")
+    title: str = Field("", description="Drawing title")
+
+
+class ExportDxf(BaseModel):
+    """Export a 2D projected view as DXF for CAM/manufacturing."""
+
+    output_path: str = Field(..., description="Output DXF file path")
+    projection_dir_x: float = Field(0, description="Projection direction X")
+    projection_dir_y: float = Field(0, description="Projection direction Y")
+    projection_dir_z: float = Field(1, description="Projection direction Z (default: top view)")
+
+
 class CheckDesignRules(BaseModel):
     """Check the active body against manufacturing design rules.
 
@@ -766,6 +825,14 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "get_features": GetFeatures,
     "find_faces": FindFaces,
     "measure_distance": MeasureDistance,
+    # Design intelligence
+    # Dimensions & Drawings
+    "add_dimension": AddDimension,
+    "get_dimensions": GetDimensions,
+    "auto_dimension": AutoDimension,
+    "export_drawing": ExportDrawing,
+    "export_section_drawing": ExportSectionDrawing,
+    "export_dxf": ExportDxf,
     # Design intelligence
     "check_design_rules": CheckDesignRules,
     "set_parameter": SetParameter,

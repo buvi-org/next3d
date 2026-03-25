@@ -709,6 +709,119 @@ def render_png(
 
 
 @mcp.tool()
+def add_dimension(
+    dim_type: str,
+    value: float,
+    entity_ids: list[str] | None = None,
+    label: str = "",
+    tolerance_plus: float = 0,
+    tolerance_minus: float = 0,
+) -> str:
+    """Add a dimension annotation (linear, radial, diametral, angular).
+
+    Args:
+        dim_type: linear, radial, diametral, angular
+        value: Measured value in mm (or degrees for angular)
+        entity_ids: Persistent IDs of referenced entities
+        label: Display label
+        tolerance_plus: Plus tolerance
+        tolerance_minus: Minus tolerance
+    """
+    r = _executor.call("add_dimension", {
+        "dim_type": dim_type, "value": value,
+        "entity_ids": entity_ids or [], "label": label,
+        "tolerance_plus": tolerance_plus, "tolerance_minus": tolerance_minus,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def get_dimensions() -> str:
+    """Get all dimension annotations on the active body."""
+    r = _executor.call("get_dimensions", {})
+    return _format_result(r)
+
+
+@mcp.tool()
+def auto_dimension() -> str:
+    """Auto-generate key dimensions from feature analysis."""
+    r = _executor.call("auto_dimension", {})
+    return _format_result(r)
+
+
+@mcp.tool()
+def export_drawing(
+    output_path: str,
+    views: list[str] | None = None,
+    title: str = "",
+    show_hidden: bool = True,
+    page_width: int = 1200,
+    page_height: int = 800,
+) -> str:
+    """Export a multi-view engineering drawing as SVG.
+
+    Args:
+        output_path: Output SVG path
+        views: front, top, right, left, back, bottom, isometric, dimetric
+        title: Drawing title
+        show_hidden: Show hidden lines
+        page_width: Page width pixels
+        page_height: Page height pixels
+    """
+    r = _executor.call("export_drawing", {
+        "output_path": output_path,
+        "views": views or ["front", "top", "right", "isometric"],
+        "title": title, "show_hidden": show_hidden,
+        "page_width": page_width, "page_height": page_height,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def export_section_drawing(
+    output_path: str,
+    section_plane: str = "XZ",
+    section_offset: float = 0,
+    title: str = "",
+) -> str:
+    """Export a cross-section drawing as SVG.
+
+    Args:
+        output_path: Output SVG path
+        section_plane: XY, XZ, or YZ
+        section_offset: Offset along plane normal in mm
+        title: Drawing title
+    """
+    r = _executor.call("export_section_drawing", {
+        "output_path": output_path, "section_plane": section_plane,
+        "section_offset": section_offset, "title": title,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def export_dxf(
+    output_path: str,
+    projection_dir_x: float = 0,
+    projection_dir_y: float = 0,
+    projection_dir_z: float = 1,
+) -> str:
+    """Export a 2D projected view as DXF for CAM/manufacturing.
+
+    Args:
+        output_path: Output DXF path
+        projection_dir_x/y/z: Projection direction (default: top view)
+    """
+    r = _executor.call("export_dxf", {
+        "output_path": output_path,
+        "projection_dir_x": projection_dir_x,
+        "projection_dir_y": projection_dir_y,
+        "projection_dir_z": projection_dir_z,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
 def check_design_rules(process: str = "cnc_milling") -> str:
     """Check active body against manufacturing design rules.
 
