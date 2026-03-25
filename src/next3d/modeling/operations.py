@@ -50,8 +50,50 @@ class OpType(str, Enum):
     LINEAR_PATTERN = "linear_pattern"
     CIRCULAR_PATTERN = "circular_pattern"
 
+    # Advanced create
+    CREATE_REVOLVE = "create_revolve"
+    CREATE_SWEEP = "create_sweep"
+    CREATE_LOFT = "create_loft"
+
+    # Advanced modify
+    ADD_SHELL = "add_shell"
+    ADD_DRAFT = "add_draft"
+
+    # Multi-body
+    CREATE_NAMED_BODY = "create_named_body"
+    SET_ACTIVE_BODY = "set_active_body"
+    DELETE_BODY = "delete_body"
+    BOOLEAN_BODIES = "boolean_bodies"
+
+    # Assembly
+    PLACE_BODY = "place_body"
+    ADD_MATE = "add_mate"
+
+    # GD&T
+    ADD_DATUM = "add_datum"
+    ADD_TOLERANCE = "add_tolerance"
+
+    # Sketch
+    CREATE_SKETCH = "create_sketch"
+    SKETCH_ADD_LINE = "sketch_add_line"
+    SKETCH_ADD_ARC = "sketch_add_arc"
+    SKETCH_ADD_CIRCLE = "sketch_add_circle"
+    SKETCH_ADD_RECT = "sketch_add_rect"
+    SKETCH_ADD_CONSTRAINT = "sketch_add_constraint"
+    SKETCH_EXTRUDE = "sketch_extrude"
+    SKETCH_REVOLVE = "sketch_revolve"
+
+    # Topology optimization
+    ADD_LOAD = "add_load"
+    ADD_BOUNDARY_CONDITION = "add_boundary_condition"
+    RUN_TOPOLOGY_OPT = "run_topology_opt"
+
     # File
     LOAD_STEP = "load_step"
+    EXPORT_STL = "export_stl"
+    EXPORT_3MF = "export_3mf"
+    EXPORT_ASSEMBLY = "export_assembly"
+    RENDER_PNG = "render_png"
 
 
 class Operation(BaseModel):
@@ -170,6 +212,18 @@ class OperationLog(BaseModel):
                     f'.slot2D({p["length"]}, {p["width"]})'
                     f'.cutBlind(-{p["depth"]})'
                 )
+            elif ot == OpType.ADD_SHELL:
+                sel = p.get("face_selector", ">Z")
+                line = (
+                    f'{var_name} = {var_name}.faces("{sel}")'
+                    f'.shell({p["thickness"]})'
+                )
+            elif ot == OpType.CREATE_REVOLVE:
+                line = f"# Revolve: profile={p.get('points', [])}, angle={p.get('angle_degrees', 360)}"
+            elif ot == OpType.CREATE_SWEEP:
+                line = f"# Sweep: profile along path"
+            elif ot == OpType.CREATE_LOFT:
+                line = f"# Loft: {len(p.get('sections', []))} sections"
             elif ot == OpType.LOAD_STEP:
                 line = f'{var_name} = cq.importers.importStep("{p["path"]}")'
             else:

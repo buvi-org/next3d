@@ -142,6 +142,68 @@ Extrude a 2D polygon along Z to create a solid.
 
 ---
 
+#### `create_revolve`
+
+Create a solid of revolution by rotating a 2D profile around an axis. Ideal for
+shafts, pulleys, bushings, nozzles — any rotationally symmetric part (~30% of all parts).
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `points` | list[list[float]] | *required* | 2D profile [[x,z], ...] in XZ plane. Must be on one side of the axis. |
+| `angle_degrees` | float | 360 | Revolution angle (360 = full) |
+| `axis_origin_x` | float | 0 | X of point on revolution axis |
+| `axis_origin_z` | float | 0 | Z of point on revolution axis |
+| `axis_direction_x` | float | 0 | X component of axis direction |
+| `axis_direction_z` | float | 1 | Z component of axis direction |
+| `center_x/y/z` | float | 0 | Offset |
+
+**Example — Pulley:**
+```json
+{
+  "points": [[15, 0], [20, 0], [20, 5], [18, 10], [18, 20], [20, 25], [20, 30], [15, 30]],
+  "angle_degrees": 360
+}
+```
+Revolves around Z axis (default) to create a pulley with grooves.
+
+---
+
+#### `create_sweep`
+
+Sweep a 2D cross-section along a 3D path. Ideal for pipes, channels, gasket grooves.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `profile_points` | list[list[float]] | *required* | 2D cross-section [[x,y], ...] |
+| `path_points` | list[list[float]] | *required* | 3D path [[x,y,z], ...]. Min 2 points. |
+| `center_x/y/z` | float | 0 | Offset for path |
+
+---
+
+#### `create_loft`
+
+Loft between cross-sections at different heights. Ideal for ducts, bottles, aero shapes.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `sections` | list[list[list[float]]] | *required* | List of 2D polygon sections |
+| `heights` | list[float] | *required* | Z-height for each section |
+| `ruled` | bool | false | Straight lines between sections if true |
+| `center_x/y/z` | float | 0 | Offset |
+
+**Example — Transition duct (square to smaller square):**
+```json
+{
+  "sections": [
+    [[-20,-20],[20,-20],[20,20],[-20,20]],
+    [[-10,-10],[10,-10],[10,10],[-10,10]]
+  ],
+  "heights": [0, 40]
+}
+```
+
+---
+
 ### MODIFY — Cut, Add, and Blend
 
 All modify tools operate on the **current shape**. They use **face selectors**
@@ -306,6 +368,35 @@ Bevel edges with a chamfer.
 | `edge_selector` | string\|null | null | Which edges. null = all |
 
 **Example — bevel top perimeter:** `add_chamfer(distance=1.5, edge_selector=">Z")`
+
+---
+
+#### `add_shell`
+
+Hollow out a solid to uniform wall thickness. Essential for enclosures, housings, containers.
+The selected face is removed (left open) and remaining walls are offset inward.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `thickness` | float | *required* | Wall thickness in mm |
+| `face_selector` | string | ">Z" | Face to remove (open). >Z=top, <Z=bottom |
+
+**Example — open-top enclosure:** `add_shell(thickness=2.0, face_selector=">Z")`
+
+---
+
+#### `add_draft`
+
+Add draft (taper) angles to faces for mold release. Required for injection molding and casting.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `angle_degrees` | float | *required* | Draft angle (typically 1-5°) |
+| `face_selector` | string | "\|Z" | Faces to draft |
+| `pull_direction_x/y/z` | float | 0,0,1 | Mold pull direction |
+| `plane_selector` | string | "<Z" | Neutral plane (parting surface) |
+
+**Example — 3° draft for injection molding:** `add_draft(angle_degrees=3.0)`
 
 ---
 
@@ -505,6 +596,43 @@ Export the current geometry to a STEP file.
 
 ---
 
+#### `export_stl`
+
+Export as STL (tessellated mesh) for 3D printing.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `output_path` | string | *required* | Output STL file path |
+| `linear_deflection` | float | 0.1 | Max chord deviation in mm (lower = finer) |
+| `angular_deflection` | float | 0.5 | Max angle deviation in radians |
+
+---
+
+#### `export_3mf`
+
+Export as 3MF for 3D printing (modern format with color/material support).
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `output_path` | string | *required* | Output 3MF file path |
+| `linear_deflection` | float | 0.1 | Max chord deviation in mm |
+| `angular_deflection` | float | 0.5 | Max angle deviation in radians |
+
+---
+
+#### `render_png`
+
+Render the geometry to a PNG or SVG image for visual feedback. Lets the AI
+"see" what it built and self-correct.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `output_path` | string | *required* | Output path (.png or .svg) |
+| `width` | int | 800 | Image width in pixels |
+| `height` | int | 600 | Image height in pixels |
+
+---
+
 #### `export_script`
 
 Export the operation history as a standalone CadQuery Python script. No
@@ -618,6 +746,68 @@ add_fillet(radius=5, edge_selector="|Z")
   → rounded corners
 
 export_step(output_path="/tmp/enclosure.step")
+```
+
+### Pattern 5: Shelled Electronics Housing (3D Print Ready)
+
+```
+create_box(length=80, width=60, height=40)
+  → solid block
+
+add_shell(thickness=2.0, face_selector=">Z")
+  → hollow box with open top, 2mm walls
+
+add_hole(center_x=25, center_y=20, diameter=4, face_selector="<Z")
+add_hole(center_x=-25, center_y=20, diameter=4, face_selector="<Z")
+add_hole(center_x=25, center_y=-20, diameter=4, face_selector="<Z")
+add_hole(center_x=-25, center_y=-20, diameter=4, face_selector="<Z")
+  → 4 mounting holes through bottom
+
+add_slot(center_x=0, center_y=0, length=30, width=8, depth=2, face_selector=">Y")
+  → cable opening on front
+
+add_fillet(radius=3, edge_selector="|Z")
+  → rounded exterior corners
+
+export_stl(output_path="/tmp/housing.stl")
+  → ready for 3D printing
+
+render_png(output_path="/tmp/housing.svg")
+  → visual check
+```
+
+### Pattern 6: Revolved Shaft
+
+```
+create_revolve(
+  points=[[5,0], [10,0], [10,15], [8,15], [8,40], [6,40], [6,50], [5,50]],
+  angle_degrees=360
+)
+  → stepped shaft with bearing seats
+
+add_hole(center_x=0, center_y=0, diameter=6, face_selector=">Z")
+  → center hole through top
+
+export_step(output_path="/tmp/shaft.step")
+export_stl(output_path="/tmp/shaft.stl")
+```
+
+### Pattern 7: Transition Duct (Loft)
+
+```
+create_loft(
+  sections=[
+    [[-30,-20],[30,-20],[30,20],[-30,20]],
+    [[-15,-15],[15,-15],[15,15],[-15,15]]
+  ],
+  heights=[0, 50]
+)
+  → rectangular-to-smaller-rectangular transition
+
+add_shell(thickness=1.5, face_selector=">Z")
+  → hollow duct
+
+export_step(output_path="/tmp/duct.step")
 ```
 
 ---
