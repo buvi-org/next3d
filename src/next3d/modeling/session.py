@@ -2148,7 +2148,7 @@ class ModelingSession:
     def add_draft(
         self,
         angle_degrees: float,
-        face_selector: str = "|Z",
+        face_selector: str = "#Z",
         pull_direction: tuple[float, float, float] = (0, 0, 1),
         plane_selector: str = "<Z",
     ) -> dict[str, Any]:

@@ -122,6 +122,41 @@ def create_extrusion(
 # MODIFY operations — alter existing geometry
 # ---------------------------------------------------------------------------
 
+def _shape_has_solids(shape: TopoDS_Shape) -> bool:
+    """Return True if the shape contains at least one solid."""
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopAbs import TopAbs_SOLID
+
+    explorer = TopExp_Explorer(shape, TopAbs_SOLID)
+    return explorer.More()
+
+
+def _fix_shape(shape: TopoDS_Shape) -> TopoDS_Shape:
+    """Run ShapeFix on a shape to repair orientation / normals.
+
+    Operations like ``shell()`` can produce solids with inverted face
+    normals (negative volume).  OCCT boolean operations treat such solids
+    as empty, which causes downstream cuts (holes, pockets) to silently
+    return an empty result.  ``ShapeFix_Shape`` corrects the orientation
+    so that booleans succeed.
+    """
+    from OCP.ShapeFix import ShapeFix_Shape
+
+    fixer = ShapeFix_Shape(shape)
+    fixer.Perform()
+    return fixer.Shape()
+
+
+def _shape_needs_fix(shape: TopoDS_Shape) -> bool:
+    """Return True if the shape has negative volume (inverted normals)."""
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
+
+    props = GProp_GProps()
+    BRepGProp.VolumeProperties_s(shape, props)
+    return props.Mass() < 0
+
+
 def add_hole(
     shape: TopoDS_Shape,
     center_x: float,
@@ -132,6 +167,12 @@ def add_hole(
 ) -> TopoDS_Shape:
     """Add a hole to an existing shape.
 
+    On shelled (hollow) bodies the ``shell()`` operation can produce a solid
+    with inverted face normals (negative volume).  OCCT boolean operations
+    interpret such shapes as empty, so a through-all hole silently returns
+    zero geometry.  When we detect this situation we run ``ShapeFix_Shape``
+    to repair the orientation before retrying the cut.
+
     Args:
         shape: The shape to modify.
         center_x: X position of hole center on the selected face.
@@ -140,13 +181,31 @@ def add_hole(
         depth: Hole depth. None = through-all.
         face_selector: CadQuery face selector string (default: top face ">Z").
     """
-    wp = _wp_from_shape(shape)
-    wp = wp.faces(face_selector).workplane().pushPoints([(center_x, center_y)])
-    if depth is None:
-        wp = wp.hole(diameter)
-    else:
-        wp = wp.hole(diameter, depth)
-    return _to_shape(wp)
+
+    def _do_hole(s: TopoDS_Shape) -> TopoDS_Shape:
+        wp = _wp_from_shape(s)
+        wp = wp.faces(face_selector).workplane().pushPoints([(center_x, center_y)])
+        if depth is None:
+            wp = wp.hole(diameter)
+        else:
+            wp = wp.hole(diameter, depth)
+        return _to_shape(wp)
+
+    # Fast path: try the hole directly.
+    result = _do_hole(shape)
+    if _shape_has_solids(result):
+        return result
+
+    # The result is empty — likely caused by inverted normals from a prior
+    # shell operation.  Repair and retry.
+    fixed = _fix_shape(shape)
+    result = _do_hole(fixed)
+    if _shape_has_solids(result):
+        return result
+
+    # Last resort: return whatever the first attempt produced so we don't
+    # silently swallow errors for genuinely invalid operations.
+    return _do_hole(shape)
 
 
 def add_counterbore_hole(
@@ -159,11 +218,26 @@ def add_counterbore_hole(
     depth: float | None = None,
     face_selector: str = ">Z",
 ) -> TopoDS_Shape:
-    """Add a counterbore hole."""
-    wp = _wp_from_shape(shape)
-    wp = wp.faces(face_selector).workplane().pushPoints([(center_x, center_y)])
-    wp = wp.cboreHole(hole_diameter, cb_diameter, cb_depth, depth)
-    return _to_shape(wp)
+    """Add a counterbore hole.
+
+    Applies the same ShapeFix fallback as :func:`add_hole` to handle
+    shelled bodies with inverted normals.
+    """
+
+    def _do(s: TopoDS_Shape) -> TopoDS_Shape:
+        wp = _wp_from_shape(s)
+        wp = wp.faces(face_selector).workplane().pushPoints([(center_x, center_y)])
+        wp = wp.cboreHole(hole_diameter, cb_diameter, cb_depth, depth)
+        return _to_shape(wp)
+
+    result = _do(shape)
+    if _shape_has_solids(result):
+        return result
+    fixed = _fix_shape(shape)
+    result = _do(fixed)
+    if _shape_has_solids(result):
+        return result
+    return _do(shape)
 
 
 def add_countersink_hole(
@@ -176,11 +250,26 @@ def add_countersink_hole(
     depth: float | None = None,
     face_selector: str = ">Z",
 ) -> TopoDS_Shape:
-    """Add a countersink hole."""
-    wp = _wp_from_shape(shape)
-    wp = wp.faces(face_selector).workplane().pushPoints([(center_x, center_y)])
-    wp = wp.cskHole(hole_diameter, cs_diameter, cs_angle, depth)
-    return _to_shape(wp)
+    """Add a countersink hole.
+
+    Applies the same ShapeFix fallback as :func:`add_hole` to handle
+    shelled bodies with inverted normals.
+    """
+
+    def _do(s: TopoDS_Shape) -> TopoDS_Shape:
+        wp = _wp_from_shape(s)
+        wp = wp.faces(face_selector).workplane().pushPoints([(center_x, center_y)])
+        wp = wp.cskHole(hole_diameter, cs_diameter, cs_angle, depth)
+        return _to_shape(wp)
+
+    result = _do(shape)
+    if _shape_has_solids(result):
+        return result
+    fixed = _fix_shape(shape)
+    result = _do(fixed)
+    if _shape_has_solids(result):
+        return result
+    return _do(shape)
 
 
 def add_pocket(
@@ -300,10 +389,32 @@ def add_chamfer(
         edge_selector: CadQuery edge selector. None = all edges.
     """
     wp = _wp_from_shape(shape)
-    if edge_selector:
-        wp = wp.edges(edge_selector).chamfer(distance)
-    else:
-        wp = wp.edges().chamfer(distance)
+    try:
+        if edge_selector:
+            selected = wp.edges(edge_selector)
+            n_edges = len(selected.vals())
+            wp = selected.chamfer(distance)
+        else:
+            n_edges = len(wp.edges().vals())
+            wp = wp.edges().chamfer(distance)
+    except Exception as exc:
+        msg = str(exc)
+        # "BRep_API: command not done" is the typical OCCT error when chamfer
+        # fails on complex edge topologies (e.g. shelled body edges shared
+        # between inner and outer walls).
+        if "command not done" in msg.lower() or "not done" in msg.lower():
+            hint = (
+                f"Chamfer (d={distance}) failed on {n_edges} edge(s) "
+                f"matching '{edge_selector or 'all'}'. "
+                "This commonly happens on shelled bodies where edges are "
+                "shared between inner and outer walls, creating geometry "
+                "too complex for the chamfer algorithm. "
+                "Try selecting specific outer edges (e.g. use a more specific "
+                "selector like '|Z' for vertical edges only) or apply the "
+                "chamfer before shelling."
+            )
+            raise RuntimeError(hint) from exc
+        raise
     return _to_shape(wp)
 
 
@@ -471,19 +582,15 @@ def create_sweep(
     ]
 
     if len(offset_path) == 2:
-        # Straight line path
-        path_wp = (
-            cq.Workplane("XY")
-            .moveTo(offset_path[0][0], offset_path[0][1])
-            .workplane(offset=offset_path[0][2])
-            .lineTo(offset_path[1][0] - offset_path[0][0],
-                    offset_path[1][1] - offset_path[0][1])
+        # Straight line path — build a wire via Workplane.spline (2 points = line)
+        path_wp = cq.Workplane("XY").spline(
+            [cq.Vector(*p) for p in offset_path]
         )
     else:
         # Spline path through 3D points
-        pts = [cq.Vector(*p) for p in offset_path]
-        path_wire = cq.Wire.makeSpline(pts)
-        path_wp = cq.Workplane(obj=path_wire)
+        path_wp = cq.Workplane("XY").spline(
+            [cq.Vector(*p) for p in offset_path]
+        )
 
     # Build profile on XY plane, then sweep along path
     # Profile is centered at origin, sweep places it at path start
@@ -559,7 +666,7 @@ def add_shell(
 def add_draft(
     shape: TopoDS_Shape,
     angle_degrees: float,
-    face_selector: str = "|Z",
+    face_selector: str = "#Z",
     pull_direction: tuple[float, float, float] = (0, 0, 1),
     plane_selector: str = "<Z",
 ) -> TopoDS_Shape:
@@ -568,38 +675,117 @@ def add_draft(
     Args:
         shape: The solid to draft.
         angle_degrees: Draft angle in degrees (typically 1-5° for molding).
-        face_selector: Selector for faces to draft (e.g. "|Z" for vertical faces).
+        face_selector: Selector for faces to draft.  Use "#Z" for vertical
+            faces (normal perpendicular to Z).  Note: "|Z" selects faces
+            whose normal is *parallel* to Z (top/bottom) — not vertical faces.
         pull_direction: Mold pull direction as (dx, dy, dz).
         plane_selector: Selector for the neutral plane (parting surface).
     """
     from OCP.gp import gp_Dir, gp_Pln, gp_Pnt
     from OCP.BRepOffsetAPI import BRepOffsetAPI_DraftAngle
+    from OCP.Draft import (
+        Draft_ErrorStatus,
+        Draft_FaceRecomputation,
+        Draft_EdgeRecomputation,
+        Draft_VertexRecomputation,
+    )
     from OCP.TopExp import TopExp_Explorer
     from OCP.TopAbs import TopAbs_FACE
     from OCP.TopoDS import TopoDS
 
+    _DRAFT_STATUS_MSG = {
+        Draft_FaceRecomputation: "face recomputation error",
+        Draft_EdgeRecomputation: "edge recomputation error",
+        Draft_VertexRecomputation: "vertex recomputation error",
+    }
+
     # Use CadQuery to select faces
     wp = _wp_from_shape(shape)
     draft_faces = wp.faces(face_selector).vals()
+    if not draft_faces:
+        raise RuntimeError(
+            f"No faces matched selector '{face_selector}'. "
+            "Check that the selector is correct for the current shape."
+        )
+
     neutral_plane_face = wp.faces(plane_selector).val()
 
     # Get the plane from the neutral face
     from OCP.BRep import BRep_Tool
-    surf = BRep_Tool.Surface_s(neutral_plane_face.wrapped)
     from OCP.GeomAdaptor import GeomAdaptor_Surface
+
+    surf = BRep_Tool.Surface_s(neutral_plane_face.wrapped)
     adaptor = GeomAdaptor_Surface(surf)
-    pln = adaptor.Plane()
+    try:
+        pln = adaptor.Plane()
+    except Exception:
+        raise RuntimeError(
+            f"Neutral plane face (selector '{plane_selector}') is not planar. "
+            "The draft neutral plane must be a flat face."
+        )
 
     pull_dir = gp_Dir(*pull_direction)
     angle_rad = math.radians(angle_degrees)
 
     drafter = BRepOffsetAPI_DraftAngle(shape)
-    for face in draft_faces:
-        drafter.Add(face.wrapped, pull_dir, angle_rad, pln)
-    drafter.Build()
+
+    # Add faces one at a time, checking for per-face failures
+    failed_faces = []
+    added_faces = 0
+    for i, face in enumerate(draft_faces):
+        try:
+            drafter.Add(face.wrapped, pull_dir, angle_rad, pln)
+            if not drafter.AddDone():
+                status = drafter.Status()
+                reason = _DRAFT_STATUS_MSG.get(status, "unknown error")
+                failed_faces.append((i, reason))
+                drafter.Remove(face.wrapped)
+            else:
+                added_faces += 1
+        except Exception as exc:
+            failed_faces.append((i, str(exc) or "OCCT exception"))
+
+    if added_faces == 0:
+        reasons = "; ".join(f"face {i}: {r}" for i, r in failed_faces)
+        raise RuntimeError(
+            f"Draft ({angle_degrees}°) failed on all {len(draft_faces)} face(s) "
+            f"matching '{face_selector}'. Errors: {reasons}. "
+            "This commonly happens on shelled or hollow bodies where the "
+            "thin-walled faces cannot be tapered — the offset geometry "
+            "self-intersects. Apply draft before shelling, or draft only "
+            "the outer faces of a solid body."
+        )
+
+    try:
+        drafter.Build()
+    except Exception as exc:
+        n_total = len(draft_faces)
+        raise RuntimeError(
+            f"Draft ({angle_degrees}°) build failed after adding "
+            f"{added_faces}/{n_total} face(s): {type(exc).__name__}. "
+            + (
+                f"{len(failed_faces)} face(s) were skipped due to errors. "
+                if failed_faces else ""
+            )
+            + "This commonly happens on shelled or hollow bodies where "
+            "the thin-walled faces cannot be tapered. "
+            "Apply draft before shelling, or use a smaller angle."
+        ) from exc
 
     if not drafter.IsDone():
-        raise RuntimeError(f"Draft operation failed with angle {angle_degrees}°")
+        status = drafter.Status()
+        reason = _DRAFT_STATUS_MSG.get(status, "unknown error")
+        n_total = len(draft_faces)
+        raise RuntimeError(
+            f"Draft ({angle_degrees}°) build failed after adding "
+            f"{added_faces}/{n_total} face(s): {reason}. "
+            + (
+                f"{len(failed_faces)} face(s) were skipped due to errors. "
+                if failed_faces else ""
+            )
+            + "This commonly happens on shelled or hollow bodies. "
+            "Apply draft before shelling, or use a smaller angle."
+        )
 
     return drafter.Shape()
 
@@ -727,20 +913,28 @@ def render_png(
         width: Image width in pixels.
         height: Image height in pixels.
     """
+    import tempfile
     import cadquery as cq
 
     solid = cq.Solid(shape)
     wp = cq.Workplane(obj=solid)
 
-    # CadQuery can export SVG natively
-    svg_content = cq.exporters.export(wp, fname=None, exportType="SVG")
-
     if path.endswith(".svg"):
-        with open(path, "w") as f:
-            f.write(svg_content)
+        cq.exporters.export(wp, path, exportType="SVG")
         return
 
-    # Try to convert SVG to PNG
+    # For PNG: export SVG to temp file, then convert
+    with tempfile.NamedTemporaryFile(suffix=".svg", mode="w", delete=False) as tmp:
+        svg_tmp = tmp.name
+    cq.exporters.export(wp, svg_tmp, exportType="SVG")
+
+    try:
+        with open(svg_tmp, "r") as f:
+            svg_content = f.read()
+    finally:
+        import os
+        os.unlink(svg_tmp)
+
     try:
         import cairosvg
         cairosvg.svg2png(

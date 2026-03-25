@@ -4,9 +4,12 @@ Detection strategy (rule-based):
 - A cylindrical face bounded by circular edges
 - Through hole: both bounding edges are shared with other faces
 - Blind hole: one bounding edge is shared, one connects to a planar bottom
+- Fillet cylinders (partial arcs, typically < 180 degrees) are excluded
 """
 
 from __future__ import annotations
+
+import math
 
 from next3d.core.identity import feature_id
 from next3d.core.schema import (
@@ -74,11 +77,23 @@ class HoleRecognizer:
             adjacent_ids = adj_lookup.get(face.persistent_id, [])
             adjacent_faces = [face_lookup[fid] for fid in adjacent_ids if fid in face_lookup]
 
-            # Skip fillet-like cylinders: small cylinder sandwiched between
-            # two larger faces (characteristic of edge blends, not holes)
-            larger_neighbors = [af for af in adjacent_faces if af.area > face.area * 2]
-            if len(larger_neighbors) >= 2 and len(circular_edges) == 0:
-                continue  # likely a fillet, not a hole
+            # Skip fillet cylindrical faces (edge blends).
+            # Fillet cylinders are partial arcs (e.g. 90-degree blends)
+            # while hole cylinders span >= 180 degrees (half-cylinder from
+            # B-Rep seam splitting, or a full 360-degree face).
+            # Compute angular extent: theta = area / (radius * height),
+            # where height is taken from the longest LINE edge on the face.
+            line_edges = [
+                edge_lookup[eid]
+                for eid in face.edge_ids
+                if eid in edge_lookup and edge_lookup[eid].curve_type == CurveType.LINE
+            ]
+            if line_edges:
+                height = max(e.length for e in line_edges)
+                if height > 0 and face.radius > 0:
+                    theta = face.area / (face.radius * height)
+                    if theta < math.pi * 0.9:  # less than ~162 deg → fillet
+                        continue
 
             # Through hole: cylindrical face with 2 circular edges, all neighbors are non-cylindrical
             if len(circular_edges) >= 2:

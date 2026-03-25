@@ -198,7 +198,20 @@ class ToolExecutor:
         creator = creators.get(p.tool_type)
         if not creator:
             return ToolResult(success=False, message=f"Unknown tool type: {p.tool_type}")
-        tool_shape = creator(**p.tool_params)
+        # Translate MCP-style center_x/center_y/center_z into the kernel's
+        # center=(x,y,z) tuple so users can pass the same param names they
+        # learned from create_box / create_cylinder / create_sphere.
+        params = dict(p.tool_params)
+        cx = params.pop("center_x", None)
+        cy = params.pop("center_y", None)
+        cz = params.pop("center_z", None)
+        if cx is not None or cy is not None or cz is not None:
+            params.setdefault("center", (
+                cx if cx is not None else 0,
+                cy if cy is not None else 0,
+                cz if cz is not None else 0,
+            ))
+        tool_shape = creator(**params)
         data = self._session.boolean_cut(tool_shape)
         return ToolResult(message=f"Boolean cut with {p.tool_type}", data=data)
 

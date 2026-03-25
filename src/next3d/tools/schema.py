@@ -219,7 +219,7 @@ class AddDraft(BaseModel):
     """Add draft (taper) angles to faces — required for injection molding and casting."""
 
     angle_degrees: float = Field(..., description="Draft angle in degrees (typically 1-5°)", gt=0, lt=45)
-    face_selector: str = Field("|Z", description="Faces to draft (|Z = vertical faces)")
+    face_selector: str = Field("#Z", description="Faces to draft (#Z = vertical faces, i.e. normal perpendicular to Z)")
     pull_direction_x: float = Field(0, description="X component of mold pull direction")
     pull_direction_y: float = Field(0, description="Y component of mold pull direction")
     pull_direction_z: float = Field(1, description="Z component of mold pull direction")
@@ -269,11 +269,32 @@ class Rotate(BaseModel):
 # ---------------------------------------------------------------------------
 
 class QueryGeometry(BaseModel):
-    """Query the semantic graph using the DSL."""
+    """Query the semantic geometry graph using a DSL.
+
+    The query string format is: entity_type(filter_key=value, ...)
+
+    Entity types: faces, edges, vertices, features.
+    Filter suffixes: __gt, __gte, __lt, __lte, __ne (e.g. area__gt=100).
+
+    Face filters: surface_type (plane|cylinder|cone|sphere|torus|bspline|other),
+        area, radius, persistent_id.
+    Edge filters: curve_type (line|circle|ellipse|bspline|other),
+        length, radius, persistent_id.
+    Feature filters: feature_type (through_hole|blind_hole|counterbore|
+        countersink|fillet|chamfer|slot|boss), persistent_id,
+        plus any parameter key (e.g. diameter, depth).
+    """
 
     query: str = Field(
         ...,
-        description='Query DSL string. Examples: \'faces(surface_type="cylinder")\', \'features(feature_type="through_hole")\', \'faces(radius>5)\'',
+        description=(
+            "DSL query string: entity_type(key=value, ...). "
+            "Entity types: faces, edges, vertices, features. "
+            "Filters support __gt/__gte/__lt/__lte/__ne suffixes. "
+            "Examples: 'faces(surface_type=\"cylinder\")', "
+            "'features(feature_type=\"through_hole\", diameter__gt=8)', "
+            "'edges(curve_type=\"circle\")', 'faces(area__gte=50)'"
+        ),
     )
 
 

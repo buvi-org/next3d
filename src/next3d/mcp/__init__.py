@@ -464,7 +464,7 @@ def add_shell(
 @mcp.tool()
 def add_draft(
     angle_degrees: float,
-    face_selector: str = "|Z",
+    face_selector: str = "#Z",
     pull_direction_x: float = 0,
     pull_direction_y: float = 0,
     pull_direction_z: float = 1,
@@ -476,7 +476,7 @@ def add_draft(
 
     Args:
         angle_degrees: Draft angle in degrees (typically 1-5)
-        face_selector: Faces to draft (|Z = vertical faces)
+        face_selector: Faces to draft (#Z = vertical faces, normal perpendicular to Z)
         pull_direction_x: X component of mold pull direction
         pull_direction_y: Y component of mold pull direction
         pull_direction_z: Z component of mold pull direction
@@ -505,7 +505,15 @@ def boolean_cut(
 
     Args:
         tool_type: Type of cutting tool — "box", "cylinder", or "sphere"
-        tool_params: Parameters for the tool (same as create_box/create_cylinder/create_sphere)
+        tool_params: Parameters for the cutting primitive.  Accepts the same
+            parameter names used by the corresponding create tool:
+
+            box — length, width, height, center_x, center_y, center_z
+            cylinder — radius, height, center_x, center_y, center_z, axis
+            sphere — radius, center_x, center_y, center_z
+
+            You may also pass center=(x,y,z) directly instead of the
+            separate center_x/center_y/center_z fields.
     """
     r = _executor.call("boolean_cut", {
         "tool_type": tool_type, "tool_params": tool_params,
@@ -610,10 +618,38 @@ def find_faces(
 
 @mcp.tool()
 def query_geometry(query: str) -> str:
-    """Query the semantic graph using the DSL.
+    """Query the semantic geometry graph using a DSL.
+
+    The query string has the form: entity_type(filter_key=value, ...)
+
+    Entity types (top-level functions):
+        faces     - select topological faces
+        edges     - select topological edges
+        vertices  - select topological vertices
+        features  - select recognized design/manufacturing features
+
+    Filter fields by entity type:
+        faces:    surface_type (plane|cylinder|cone|sphere|torus|bspline|other),
+                  area (float), radius (float, for curved surfaces),
+                  persistent_id (str)
+        edges:    curve_type (line|circle|ellipse|bspline|other),
+                  length (float), radius (float), persistent_id (str)
+        vertices: persistent_id (str)
+        features: feature_type (through_hole|blind_hole|counterbore|countersink|
+                  fillet|chamfer|slot|boss), persistent_id (str),
+                  plus any key in the feature's parameters dict (e.g. diameter, depth)
+
+    Comparison suffixes (append with double-underscore):
+        __gt, __gte, __lt, __lte, __ne
+        Example: faces(area__gt=100) selects faces with area > 100
+
+    Chaining: the result supports .adjacent(**filters) for face adjacency,
+    but chaining is only available via the Python API, not the DSL string.
 
     Args:
-        query: DSL string. Examples: 'faces(surface_type="cylinder")', 'features(feature_type="through_hole")', 'faces(radius>5)'
+        query: DSL query string, e.g. 'faces(surface_type="cylinder")',
+               'features(feature_type="through_hole", diameter__gt=8)',
+               'edges(curve_type="circle")', 'faces(area__gte=50)'
     """
     r = _executor.call("query_geometry", {"query": query})
     return _format_result(r)

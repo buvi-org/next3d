@@ -72,6 +72,9 @@ class OpType(str, Enum):
     # GD&T
     ADD_DATUM = "add_datum"
     ADD_TOLERANCE = "add_tolerance"
+    REMOVE_DATUM = "remove_datum"
+    REMOVE_TOLERANCE = "remove_tolerance"
+    MODIFY_TOLERANCE = "modify_tolerance"
 
     # Sketch
     CREATE_SKETCH = "create_sketch"

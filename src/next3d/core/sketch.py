@@ -257,7 +257,120 @@ class Sketch:
     # Build CadQuery wire from entities
     # ------------------------------------------------------------------
 
-    def _build_workplane(self) -> cq.Workplane:
+    def _entity_bbox(self, entity: SketchEntity) -> tuple[float, float, float, float]:
+        """Return (min_x, min_y, max_x, max_y) bounding box for an entity."""
+        p = entity.params
+        if entity.entity_type == EntityType.CIRCLE:
+            return (p["cx"] - p["radius"], p["cy"] - p["radius"],
+                    p["cx"] + p["radius"], p["cy"] + p["radius"])
+        if entity.entity_type == EntityType.RECTANGLE:
+            hw, hh = p["width"] / 2, p["height"] / 2
+            return (p["cx"] - hw, p["cy"] - hh, p["cx"] + hw, p["cy"] + hh)
+        if entity.entity_type == EntityType.POLYGON:
+            pts = p["points"]
+            xs = [pt[0] for pt in pts]
+            ys = [pt[1] for pt in pts]
+            return (min(xs), min(ys), max(xs), max(ys))
+        if entity.entity_type == EntityType.LINE:
+            return (min(p["x1"], p["x2"]), min(p["y1"], p["y2"]),
+                    max(p["x1"], p["x2"]), max(p["y1"], p["y2"]))
+        if entity.entity_type == EntityType.ARC:
+            cx, cy, r = p["cx"], p["cy"], p["radius"]
+            return (cx - r, cy - r, cx + r, cy + r)
+        # Spline / fallback
+        if "points" in p:
+            pts = p["points"]
+            xs = [pt[0] for pt in pts]
+            ys = [pt[1] for pt in pts]
+            return (min(xs), min(ys), max(xs), max(ys))
+        return (0, 0, 0, 0)
+
+    def _entity_area(self, entity: SketchEntity) -> float:
+        """Approximate area enclosed by an entity (for outer/inner classification)."""
+        p = entity.params
+        if entity.entity_type == EntityType.CIRCLE:
+            return math.pi * p["radius"] ** 2
+        if entity.entity_type == EntityType.RECTANGLE:
+            return p["width"] * p["height"]
+        if entity.entity_type == EntityType.POLYGON:
+            # Shoelace formula
+            pts = p["points"]
+            n = len(pts)
+            area = 0.0
+            for i in range(n):
+                j = (i + 1) % n
+                area += pts[i][0] * pts[j][1]
+                area -= pts[j][0] * pts[i][1]
+            return abs(area) / 2
+        # Bounding-box area as rough fallback
+        bb = self._entity_bbox(entity)
+        return (bb[2] - bb[0]) * (bb[3] - bb[1])
+
+    @staticmethod
+    def _bbox_contains(outer: tuple[float, float, float, float],
+                       inner: tuple[float, float, float, float],
+                       tol: float = 1e-9) -> bool:
+        """Return True if *outer* bounding box fully contains *inner*."""
+        return (outer[0] - tol <= inner[0] and outer[1] - tol <= inner[1] and
+                outer[2] + tol >= inner[2] and outer[3] + tol >= inner[3])
+
+    def _classify_profiles(self) -> tuple[list[SketchEntity], list[SketchEntity]]:
+        """Split entities into (outer_entities, inner_entities).
+
+        An entity is considered *inner* if:
+        - It is a closed profile (CIRCLE, RECTANGLE, POLYGON) and
+        - Its bounding box is fully inside another closed profile's bounding box.
+
+        Lines and arcs that form the outer contour are always outer.
+        """
+        closed_types = {EntityType.CIRCLE, EntityType.RECTANGLE, EntityType.POLYGON}
+        open_types = {EntityType.LINE, EntityType.ARC, EntityType.SPLINE}
+
+        # Separate closed standalone profiles from open/wire entities
+        closed_entities = [e for e in self.entities if e.entity_type in closed_types]
+        open_entities = [e for e in self.entities if e.entity_type in open_types]
+
+        # If 0 or 1 closed entities, no inner profiles possible
+        if len(closed_entities) <= 1 and not open_entities:
+            return (self.entities, [])
+        if len(closed_entities) == 0:
+            return (self.entities, [])
+
+        # When we have open entities (lines) plus closed entities, the lines
+        # form the outer wire and closed entities inside are inner profiles.
+        if open_entities:
+            # Lines form the outer contour — compute its bounding box
+            outer_bb = self._entity_bbox(open_entities[0])
+            for e in open_entities[1:]:
+                bb = self._entity_bbox(e)
+                outer_bb = (min(outer_bb[0], bb[0]), min(outer_bb[1], bb[1]),
+                            max(outer_bb[2], bb[2]), max(outer_bb[3], bb[3]))
+
+            inner = []
+            outer_closed = []
+            for e in closed_entities:
+                if self._bbox_contains(outer_bb, self._entity_bbox(e)):
+                    inner.append(e)
+                else:
+                    outer_closed.append(e)
+            return (open_entities + outer_closed, inner)
+
+        # All closed entities — the largest area is the outer profile
+        sorted_by_area = sorted(closed_entities, key=self._entity_area, reverse=True)
+        outer_entity = sorted_by_area[0]
+        outer_bb = self._entity_bbox(outer_entity)
+
+        inner = []
+        extra_outer = []
+        for e in sorted_by_area[1:]:
+            if self._bbox_contains(outer_bb, self._entity_bbox(e)):
+                inner.append(e)
+            else:
+                extra_outer.append(e)
+
+        return ([outer_entity] + extra_outer, inner)
+
+    def _build_workplane(self, entities: list[SketchEntity] | None = None) -> cq.Workplane:
         """Convert sketch entities into a CadQuery Workplane with a closed wire/face.
 
         Strategy:
@@ -266,15 +379,19 @@ class Sketch:
         - If there is a single polygon, use .polyline().close()
         - For lines, chain them as a polyline (collect endpoints)
         - Mixed entity types: build wire from individual segments
+
+        Args:
+            entities: Subset of entities to build. Defaults to all entities.
         """
-        if not self.entities:
+        ents = entities if entities is not None else self.entities
+        if not ents:
             raise ValueError("Sketch has no entities. Add lines, circles, etc. first.")
 
         wp = cq.Workplane(self.plane)
 
         # Single-entity fast paths
-        if len(self.entities) == 1:
-            e = self.entities[0]
+        if len(ents) == 1:
+            e = ents[0]
             p = e.params
 
             if e.entity_type == EntityType.CIRCLE:
@@ -288,26 +405,26 @@ class Sketch:
                 return wp.polyline(pts).close()
 
         # Multiple entities — check if all lines (common case)
-        all_lines = all(e.entity_type == EntityType.LINE for e in self.entities)
+        all_lines = all(e.entity_type == EntityType.LINE for e in ents)
         if all_lines:
             # Build polyline from line endpoints
-            first = self.entities[0].params
+            first = ents[0].params
             wp = wp.moveTo(first["x1"], first["y1"])
-            for e in self.entities:
+            for e in ents:
                 p = e.params
                 wp = wp.lineTo(p["x2"], p["y2"])
             wp = wp.close()
             return wp
 
         # Mixed entities — build wire segment by segment
-        first_entity = self.entities[0]
+        first_entity = ents[0]
         if first_entity.entity_type == EntityType.LINE:
             p = first_entity.params
             wp = wp.moveTo(p["x1"], p["y1"])
         else:
             wp = wp.moveTo(0, 0)
 
-        for e in self.entities:
+        for e in ents:
             p = e.params
             if e.entity_type == EntityType.LINE:
                 wp = wp.lineTo(p["x2"], p["y2"])
@@ -344,15 +461,32 @@ class Sketch:
     def extrude(self, height: float) -> TopoDS_Shape:
         """Extrude the sketch profile to create a solid.
 
+        If the sketch contains inner profiles (e.g. circles inside a rectangle),
+        they are subtracted from the extrusion to create holes/cutouts.
+
         Args:
             height: Extrusion height along the sketch plane normal.
 
         Returns:
             TopoDS_Shape of the extruded solid.
         """
-        wp = self._build_workplane()
+        outer_entities, inner_entities = self._classify_profiles()
+
+        # Extrude the outer profile
+        wp = self._build_workplane(outer_entities)
         wp = wp.extrude(height)
-        return wp.val().wrapped
+        result_shape = wp.val().wrapped
+
+        # Subtract each inner profile extrusion to create holes
+        if inner_entities:
+            from next3d.modeling.kernel import boolean_cut
+            for inner_e in inner_entities:
+                inner_wp = self._build_workplane([inner_e])
+                inner_wp = inner_wp.extrude(height)
+                inner_shape = inner_wp.val().wrapped
+                result_shape = boolean_cut(result_shape, inner_shape)
+
+        return result_shape
 
     def revolve(
         self,

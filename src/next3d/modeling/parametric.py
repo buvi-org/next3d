@@ -137,7 +137,7 @@ class ParametricEngine:
         # Find all operations that depend on this parameter
         affected = [
             op.op_index for op in self._operations
-            if op.depends_on(name)
+            if op is not None and op.depends_on(name)
         ]
 
         if not affected:
