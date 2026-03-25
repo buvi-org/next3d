@@ -253,7 +253,6 @@ def render_view(
         render_shape = _create_section(shape, config.section_plane, config.section_offset)
 
     solid = cq.Solid(render_shape)
-    wp = cq.Workplane(obj=solid)
 
     opts = {
         "projectionDir": config.projection_dir,
@@ -264,14 +263,8 @@ def render_view(
         "showAxes": False,
     }
 
-    try:
-        svg = cq.exporters.getSVG(wp, opts)
-    except Exception:
-        try:
-            svg = cq.exporters.getSVG(wp)
-        except Exception:
-            # Last resort: use toSvg on workplane
-            svg = wp.toSvg()
+    # getSVG requires a Shape, not a Workplane
+    svg = cq.exporters.getSVG(solid, opts)
 
     # Get actual 2D dimensions from the SVG viewBox
     _, vb_x, vb_y, vb_w, vb_h = _extract_svg_content(svg)
