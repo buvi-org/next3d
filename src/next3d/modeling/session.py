@@ -128,6 +128,13 @@ class ModelingSession:
         self._loads: list[Any] = []
         self._boundary_conditions: list[Any] = []
 
+        # Interactive sheet metal state
+        self._sheet_metal_segments: list[dict] = []
+        self._sheet_metal_thickness: float = 0
+        self._sheet_metal_bend_radius: float = 1.0
+        self._sheet_metal_k_factor: float = 0.44
+        self._sheet_metal_material: str = "steel_mild"
+
         # Global operation log
         self._log = OperationLog()
 
@@ -1096,6 +1103,110 @@ class ModelingSession:
         cost = estimate_sheet_metal_cost(fp, material_cost_per_kg, density)
         cost.update(fp.to_dict())
         return cost
+
+    # ------------------------------------------------------------------
+    # INTERACTIVE SHEET METAL
+    # ------------------------------------------------------------------
+
+    def sheet_metal_define(self, thickness: float, bend_radius: float = 1.0,
+                           k_factor: float = 0.44, material: str = "steel_mild") -> dict[str, Any]:
+        """Initialize interactive sheet metal mode."""
+        from next3d.core.sheet_metal import get_k_factor
+        self._sheet_metal_segments = []
+        self._sheet_metal_thickness = thickness
+        self._sheet_metal_bend_radius = bend_radius
+        self._sheet_metal_material = material
+        self._sheet_metal_k_factor = get_k_factor(material) if k_factor == 0.44 else k_factor
+        return {"thickness": thickness, "bend_radius": bend_radius,
+                "k_factor": self._sheet_metal_k_factor, "material": material, "segments": 0}
+
+    def _require_sheet_metal(self) -> None:
+        if self._sheet_metal_thickness <= 0:
+            raise ModelingError("Sheet metal not initialized. Call sheet_metal_define() first.")
+
+    def sheet_metal_add_flat(self, length: float, width: float) -> dict[str, Any]:
+        """Append a flat segment."""
+        self._require_sheet_metal()
+        seg = {"type": "flat", "length": length, "width": width}
+        self._sheet_metal_segments.append(seg)
+        return {"index": len(self._sheet_metal_segments) - 1, "segment": seg,
+                "total_segments": len(self._sheet_metal_segments)}
+
+    def sheet_metal_add_bend(self, angle: float) -> dict[str, Any]:
+        """Append a bend."""
+        from next3d.core.sheet_metal import BendParameters
+        self._require_sheet_metal()
+        seg = {"type": "bend", "angle": angle}
+        self._sheet_metal_segments.append(seg)
+        bp = BendParameters(abs(angle), self._sheet_metal_bend_radius,
+                            self._sheet_metal_thickness, self._sheet_metal_k_factor)
+        return {"index": len(self._sheet_metal_segments) - 1, "segment": seg,
+                "bend_allowance_mm": round(bp.bend_allowance, 4),
+                "total_segments": len(self._sheet_metal_segments)}
+
+    def sheet_metal_list_segments(self) -> dict[str, Any]:
+        """List all segments with computed bend parameters."""
+        from next3d.core.sheet_metal import BendParameters
+        self._require_sheet_metal()
+        segments = []
+        for i, seg in enumerate(self._sheet_metal_segments):
+            entry = {"index": i, **seg}
+            if seg["type"] == "bend":
+                bp = BendParameters(abs(seg["angle"]), self._sheet_metal_bend_radius,
+                                    self._sheet_metal_thickness, self._sheet_metal_k_factor)
+                entry["bend_allowance_mm"] = round(bp.bend_allowance, 4)
+                entry["bend_deduction_mm"] = round(bp.bend_deduction, 4)
+            segments.append(entry)
+        return {"thickness": self._sheet_metal_thickness, "bend_radius": self._sheet_metal_bend_radius,
+                "k_factor": self._sheet_metal_k_factor, "material": self._sheet_metal_material,
+                "total_segments": len(segments), "segments": segments}
+
+    def sheet_metal_modify_segment(self, index: int, **changes: Any) -> dict[str, Any]:
+        """Modify a segment (angle, length, width)."""
+        self._require_sheet_metal()
+        if index < 0 or index >= len(self._sheet_metal_segments):
+            raise ModelingError(f"Index {index} out of range (0..{len(self._sheet_metal_segments) - 1})")
+        seg = self._sheet_metal_segments[index]
+        for key, value in changes.items():
+            if key in ("angle", "length", "width"):
+                seg[key] = value
+        return {"index": index, "segment": seg, "total_segments": len(self._sheet_metal_segments)}
+
+    def sheet_metal_remove_segment(self, index: int) -> dict[str, Any]:
+        """Remove a segment by index."""
+        self._require_sheet_metal()
+        if index < 0 or index >= len(self._sheet_metal_segments):
+            raise ModelingError(f"Index {index} out of range")
+        removed = self._sheet_metal_segments.pop(index)
+        return {"removed": removed, "total_segments": len(self._sheet_metal_segments)}
+
+    def sheet_metal_insert_segment(self, index: int, segment: dict[str, Any]) -> dict[str, Any]:
+        """Insert a segment at a position."""
+        self._require_sheet_metal()
+        if index < 0 or index > len(self._sheet_metal_segments):
+            raise ModelingError(f"Index {index} out of range")
+        self._sheet_metal_segments.insert(index, segment)
+        return {"index": index, "segment": segment, "total_segments": len(self._sheet_metal_segments)}
+
+    def sheet_metal_get_flat_pattern(self) -> dict[str, Any]:
+        """Compute flat pattern from current segments."""
+        from next3d.core.sheet_metal import compute_flat_pattern
+        self._require_sheet_metal()
+        if not self._sheet_metal_segments:
+            raise ModelingError("No segments defined.")
+        fp = compute_flat_pattern(self._sheet_metal_segments, self._sheet_metal_thickness,
+                                  self._sheet_metal_bend_radius, self._sheet_metal_k_factor)
+        return fp.to_dict()
+
+    def sheet_metal_get_cost(self) -> dict[str, Any]:
+        """Estimate cost from current segments."""
+        from next3d.core.sheet_metal import compute_flat_pattern, estimate_sheet_metal_cost
+        self._require_sheet_metal()
+        if not self._sheet_metal_segments:
+            raise ModelingError("No segments defined.")
+        fp = compute_flat_pattern(self._sheet_metal_segments, self._sheet_metal_thickness,
+                                  self._sheet_metal_bend_radius, self._sheet_metal_k_factor)
+        return estimate_sheet_metal_cost(fp)
 
     # ------------------------------------------------------------------
     # DIMENSIONS

@@ -709,6 +709,79 @@ def render_png(
 
 
 @mcp.tool()
+def sheet_metal_define(thickness: float, bend_radius: float = 1.0,
+                       k_factor: float = 0.44, material: str = "steel_mild") -> str:
+    """Initialize interactive sheet metal mode.
+
+    Args:
+        thickness: Material thickness mm
+        bend_radius: Inside bend radius mm
+        k_factor: K-factor (auto from material if default)
+        material: steel_mild, steel_stainless, aluminum, copper, brass
+    """
+    r = _executor.call("sheet_metal_define", {
+        "thickness": thickness, "bend_radius": bend_radius,
+        "k_factor": k_factor, "material": material,
+    })
+    return _format_result(r)
+
+@mcp.tool()
+def sheet_metal_add_flat(length: float, width: float) -> str:
+    """Add a flat segment to sheet metal definition."""
+    r = _executor.call("sheet_metal_add_flat", {"length": length, "width": width})
+    return _format_result(r)
+
+@mcp.tool()
+def sheet_metal_add_bend(angle: float) -> str:
+    """Add a bend to sheet metal definition."""
+    r = _executor.call("sheet_metal_add_bend", {"angle": angle})
+    return _format_result(r)
+
+@mcp.tool()
+def sheet_metal_list_segments() -> str:
+    """List all sheet metal segments with bend allowances."""
+    r = _executor.call("sheet_metal_list_segments", {})
+    return _format_result(r)
+
+@mcp.tool()
+def sheet_metal_modify_segment(index: int, angle: float | None = None,
+                                length: float | None = None, width: float | None = None) -> str:
+    """Modify a sheet metal segment."""
+    r = _executor.call("sheet_metal_modify_segment", {
+        "index": index, "angle": angle, "length": length, "width": width,
+    })
+    return _format_result(r)
+
+@mcp.tool()
+def sheet_metal_remove_segment(index: int) -> str:
+    """Remove a sheet metal segment."""
+    r = _executor.call("sheet_metal_remove_segment", {"index": index})
+    return _format_result(r)
+
+@mcp.tool()
+def sheet_metal_insert_segment(index: int, segment_type: str,
+                                angle: float | None = None, length: float | None = None,
+                                width: float | None = None) -> str:
+    """Insert a segment at a position."""
+    r = _executor.call("sheet_metal_insert_segment", {
+        "index": index, "segment_type": segment_type,
+        "angle": angle, "length": length, "width": width,
+    })
+    return _format_result(r)
+
+@mcp.tool()
+def sheet_metal_get_flat_pattern() -> str:
+    """Compute flat pattern from current segments."""
+    r = _executor.call("sheet_metal_get_flat_pattern", {})
+    return _format_result(r)
+
+@mcp.tool()
+def sheet_metal_get_cost() -> str:
+    """Estimate manufacturing cost from current segments."""
+    r = _executor.call("sheet_metal_get_cost", {})
+    return _format_result(r)
+
+@mcp.tool()
 def create_sheet_metal(width: float, length: float, thickness: float) -> str:
     """Create a flat sheet metal blank.
 

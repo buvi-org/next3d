@@ -563,6 +563,53 @@ class TestSheetMetal:
         assert r.data["total_cost"] > 0
 
 
+class TestInteractiveSheetMetal:
+    def test_full_interactive_workflow(self):
+        s = ModelingSession()
+        s.sheet_metal_define(1.5, material="aluminum")
+        s.sheet_metal_add_flat(50, 100)
+        s.sheet_metal_add_bend(90)
+        s.sheet_metal_add_flat(30, 100)
+        listing = s.sheet_metal_list_segments()
+        assert listing["total_segments"] == 3
+        assert listing["k_factor"] == 0.33  # aluminum
+        s.sheet_metal_modify_segment(1, angle=60)
+        listing = s.sheet_metal_list_segments()
+        assert listing["segments"][1]["angle"] == 60
+        fp = s.sheet_metal_get_flat_pattern()
+        assert fp["total_bends"] == 1
+
+    def test_remove_and_insert(self):
+        s = ModelingSession()
+        s.sheet_metal_define(2.0)
+        s.sheet_metal_add_flat(40, 80)
+        s.sheet_metal_add_bend(90)
+        s.sheet_metal_add_flat(20, 80)
+        s.sheet_metal_remove_segment(1)
+        assert s.sheet_metal_list_segments()["total_segments"] == 2
+        s.sheet_metal_insert_segment(1, {"type": "bend", "angle": 45})
+        assert s.sheet_metal_list_segments()["segments"][1]["angle"] == 45
+
+    def test_cost_interactive(self):
+        s = ModelingSession()
+        s.sheet_metal_define(1.5)
+        s.sheet_metal_add_flat(50, 100)
+        s.sheet_metal_add_bend(90)
+        s.sheet_metal_add_flat(30, 100)
+        assert s.sheet_metal_get_cost()["total_cost"] > 0
+
+    def test_via_executor(self):
+        ex = ToolExecutor()
+        ex.call("sheet_metal_define", {"thickness": 2.0, "material": "steel_mild"})
+        ex.call("sheet_metal_add_flat", {"length": 50, "width": 100})
+        ex.call("sheet_metal_add_bend", {"angle": 90})
+        ex.call("sheet_metal_add_flat", {"length": 30, "width": 100})
+        r = ex.call("sheet_metal_list_segments", {})
+        assert r.success and r.data["total_segments"] == 3
+        r = ex.call("sheet_metal_get_flat_pattern", {})
+        assert r.success
+
+
 class TestDimensions:
     def test_add_dimension(self):
         s = ModelingSession()

@@ -302,7 +302,57 @@ class ToolExecutor:
     # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
-    # SHEET METAL handlers
+    # INTERACTIVE SHEET METAL handlers
+    # ------------------------------------------------------------------
+
+    def _handle_sheet_metal_define(self, p) -> ToolResult:
+        data = self._session.sheet_metal_define(p.thickness, p.bend_radius, p.k_factor, p.material)
+        return ToolResult(message=f"Sheet metal: t={p.thickness}mm, {p.material}", data=data)
+
+    def _handle_sheet_metal_add_flat(self, p) -> ToolResult:
+        data = self._session.sheet_metal_add_flat(p.length, p.width)
+        return ToolResult(message=f"Added flat {p.length}×{p.width}mm", data=data)
+
+    def _handle_sheet_metal_add_bend(self, p) -> ToolResult:
+        data = self._session.sheet_metal_add_bend(p.angle)
+        return ToolResult(message=f"Added bend {p.angle}°", data=data)
+
+    def _handle_sheet_metal_list_segments(self, _p) -> ToolResult:
+        data = self._session.sheet_metal_list_segments()
+        return ToolResult(message=f"{data['total_segments']} segments", data=data)
+
+    def _handle_sheet_metal_modify_segment(self, p) -> ToolResult:
+        changes = {}
+        if p.angle is not None: changes["angle"] = p.angle
+        if p.length is not None: changes["length"] = p.length
+        if p.width is not None: changes["width"] = p.width
+        data = self._session.sheet_metal_modify_segment(p.index, **changes)
+        return ToolResult(message=f"Modified segment {p.index}", data=data)
+
+    def _handle_sheet_metal_remove_segment(self, p) -> ToolResult:
+        data = self._session.sheet_metal_remove_segment(p.index)
+        return ToolResult(message=f"Removed segment {p.index}", data=data)
+
+    def _handle_sheet_metal_insert_segment(self, p) -> ToolResult:
+        seg: dict = {"type": p.segment_type}
+        if p.segment_type == "flat":
+            seg["length"] = p.length or 0
+            seg["width"] = p.width or 0
+        else:
+            seg["angle"] = p.angle or 0
+        data = self._session.sheet_metal_insert_segment(p.index, seg)
+        return ToolResult(message=f"Inserted {p.segment_type} at {p.index}", data=data)
+
+    def _handle_sheet_metal_get_flat_pattern(self, _p) -> ToolResult:
+        data = self._session.sheet_metal_get_flat_pattern()
+        return ToolResult(message=f"Flat: {data['length_mm']}×{data['width_mm']}mm", data=data)
+
+    def _handle_sheet_metal_get_cost(self, _p) -> ToolResult:
+        data = self._session.sheet_metal_get_cost()
+        return ToolResult(message=f"Cost: ${data['total_cost']}", data=data)
+
+    # ------------------------------------------------------------------
+    # SHEET METAL (one-shot) handlers
     # ------------------------------------------------------------------
 
     def _handle_create_sheet_metal(self, p) -> ToolResult:

@@ -463,6 +463,54 @@ class GetParametricState(BaseModel):
     pass
 
 
+class SheetMetalDefine(BaseModel):
+    """Initialize interactive sheet metal mode."""
+    thickness: float = Field(..., description="Material thickness mm", gt=0)
+    bend_radius: float = Field(1.0, description="Inside bend radius mm", gt=0)
+    k_factor: float = Field(0.44, description="K-factor (auto from material if default)")
+    material: str = Field("steel_mild", description="steel_mild, steel_stainless, aluminum, copper, brass")
+
+class SheetMetalAddFlat(BaseModel):
+    """Add a flat segment."""
+    length: float = Field(..., description="Length mm", gt=0)
+    width: float = Field(..., description="Width mm", gt=0)
+
+class SheetMetalAddBend(BaseModel):
+    """Add a bend."""
+    angle: float = Field(..., description="Bend angle degrees")
+
+class SheetMetalListSegments(BaseModel):
+    """List all segments with bend allowances."""
+    pass
+
+class SheetMetalModifySegment(BaseModel):
+    """Modify a segment."""
+    index: int = Field(..., description="Segment index", ge=0)
+    angle: float | None = Field(None)
+    length: float | None = Field(None)
+    width: float | None = Field(None)
+
+class SheetMetalRemoveSegment(BaseModel):
+    """Remove a segment by index."""
+    index: int = Field(..., ge=0)
+
+class SheetMetalInsertSegment(BaseModel):
+    """Insert a segment at a position."""
+    index: int = Field(..., ge=0)
+    segment_type: Literal["flat", "bend"] = Field(...)
+    angle: float | None = Field(None)
+    length: float | None = Field(None)
+    width: float | None = Field(None)
+
+class SheetMetalGetFlatPattern(BaseModel):
+    """Compute flat pattern from current segments."""
+    pass
+
+class SheetMetalGetCost(BaseModel):
+    """Estimate cost from current segments."""
+    pass
+
+
 class CreateSheetMetal(BaseModel):
     """Create a flat sheet metal blank."""
 
@@ -860,7 +908,17 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "find_faces": FindFaces,
     "measure_distance": MeasureDistance,
     # Design intelligence
-    # Sheet metal
+    # Interactive sheet metal
+    "sheet_metal_define": SheetMetalDefine,
+    "sheet_metal_add_flat": SheetMetalAddFlat,
+    "sheet_metal_add_bend": SheetMetalAddBend,
+    "sheet_metal_list_segments": SheetMetalListSegments,
+    "sheet_metal_modify_segment": SheetMetalModifySegment,
+    "sheet_metal_remove_segment": SheetMetalRemoveSegment,
+    "sheet_metal_insert_segment": SheetMetalInsertSegment,
+    "sheet_metal_get_flat_pattern": SheetMetalGetFlatPattern,
+    "sheet_metal_get_cost": SheetMetalGetCost,
+    # Sheet metal (one-shot)
     "create_sheet_metal": CreateSheetMetal,
     "compute_flat_pattern": ComputeFlatPattern,
     "estimate_sheet_metal_cost": EstimateSheetMetalCost,
