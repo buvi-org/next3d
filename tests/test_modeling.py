@@ -389,6 +389,92 @@ class TestParametricDimensions:
         assert r.data["count"] == 1
         assert r.data["parameters"]["wall_thickness"]["value"] == 2.5
 
+    def test_parameter_binding_and_replay(self):
+        """Full parametric: define param, use in operation, change, auto-replay."""
+        s = ModelingSession()
+        s.set_parameter("box_height", 20.0, "Box height")
+        s.create_box(100, 60, 20)  # initial build
+
+        # Record the shell op with a parameter binding
+        s.set_parameter("wall_t", 3.0, "Wall thickness")
+        s.add_shell(3.0, ">Z")
+
+        # Manually record binding in parametric engine
+        # (In real AI usage, the AI would pass @wall_t in the params)
+        s._parametric.record_operation(
+            1, "add_shell",
+            {"thickness": "@wall_t", "face_selector": ">Z"},
+            "Shell with parametric wall thickness",
+        )
+
+        # Now change the parameter
+        result = s.update_parameter("wall_t", 2.0)
+        assert result["new_value"] == 2.0
+        assert result["affected_operations"] > 0
+
+    def test_dependency_graph(self):
+        """Dependency graph shows which params drive which operations."""
+        s = ModelingSession()
+        s.set_parameter("width", 60.0)
+        s.set_parameter("hole_d", 10.0)
+        s.create_box(100, 60, 20)
+
+        # Record with bindings
+        s._parametric.record_operation(0, "create_box",
+            {"length": 100, "width": "@width", "height": 20})
+        s._parametric.record_operation(1, "add_hole",
+            {"center_x": 0, "center_y": 0, "diameter": "@hole_d"})
+
+        deps = s.get_dependency_graph()
+        assert 0 in deps["width"]    # create_box depends on width
+        assert 1 in deps["hole_d"]   # add_hole depends on hole_d
+        assert 0 not in deps["hole_d"]  # create_box doesn't depend on hole_d
+
+    def test_design_table(self):
+        """Generate multiple design variants."""
+        s = ModelingSession()
+        s.set_parameter("wall_t", 3.0)
+        s.set_parameter("hole_d", 8.0)
+        s.create_box(100, 60, 20)
+        s.add_shell(3.0)
+        s.add_hole(0, 0, 8.0)
+
+        # Record bindings
+        s._parametric.record_operation(1, "add_shell",
+            {"thickness": "@wall_t", "face_selector": ">Z"})
+        s._parametric.record_operation(2, "add_hole",
+            {"center_x": 0, "center_y": 0, "diameter": "@hole_d"})
+
+        result = s.design_table({
+            "wall_t": [2.0, 3.0, 4.0],
+            "hole_d": [6.0, 8.0],
+        })
+        assert result["variant_count"] == 6  # 3 × 2
+        # Check that variants have different resolved values
+        v0 = result["variants"][0]
+        assert v0["parameters"]["wall_t"] == 2.0
+        assert v0["parameters"]["hole_d"] == 6.0
+
+    def test_design_table_via_executor(self):
+        ex = ToolExecutor()
+        ex.call("set_parameter", {"name": "t", "value": 3.0})
+        ex.call("create_box", {"length": 50, "width": 50, "height": 20})
+        r = ex.call("design_table", {
+            "param_ranges": {"t": [2.0, 3.0, 4.0]},
+        })
+        assert r.success
+        assert r.data["variant_count"] == 3
+
+    def test_parametric_state(self):
+        ex = ToolExecutor()
+        ex.call("set_parameter", {"name": "w", "value": 5.0, "description": "Width"})
+        ex.call("create_box", {"length": 100, "width": 60, "height": 20})
+        r = ex.call("get_parametric_state", {})
+        assert r.success
+        assert "parameters" in r.data
+        assert "w" in r.data["parameters"]
+        assert "operations" in r.data
+
 
 class TestFEA:
     def test_plain_plate_fea(self):

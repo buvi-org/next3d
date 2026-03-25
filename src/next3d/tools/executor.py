@@ -318,6 +318,25 @@ class ToolExecutor:
         data = self._session.get_parameters()
         return ToolResult(message=f"{data['count']} parameters", data=data)
 
+    def _handle_update_parameter(self, p) -> ToolResult:
+        data = self._session.update_parameter(p.name, p.new_value)
+        replayed = data.get("replayed", 0)
+        return ToolResult(
+            message=f"Updated {p.name} → {p.new_value} ({replayed} operations replayed)",
+            data=data,
+        )
+
+    def _handle_design_table(self, p) -> ToolResult:
+        data = self._session.design_table(p.param_ranges)
+        return ToolResult(
+            message=f"Design table: {data['variant_count']} variants",
+            data=data,
+        )
+
+    def _handle_get_parametric_state(self, _p) -> ToolResult:
+        data = self._session.get_parametric_state()
+        return ToolResult(message="Parametric state", data=data)
+
     # ------------------------------------------------------------------
     # MULTI-BODY handlers
     # ------------------------------------------------------------------

@@ -25,6 +25,7 @@ from next3d.core.schema import SemanticGraph
 from next3d.graph.semantic import build_semantic_graph_from_shape
 from next3d.modeling import kernel
 from next3d.modeling.operations import OpType, Operation, OperationLog
+from next3d.modeling.parametric import ParametricEngine
 
 
 class ModelingError(Exception):
@@ -113,8 +114,9 @@ class ModelingSession:
         self._placements: dict[str, Placement] = {}
         self._mates: list[MateConstraint] = []
 
-        # Parametric dimensions
-        self._parameters: dict[str, dict[str, Any]] = {}  # name → {value, description}
+        # Parametric engine (full: bindings, dependency graph, selective replay)
+        self._parametric = ParametricEngine()
+        self._parameters: dict[str, dict[str, Any]] = {}  # legacy compat
 
         # GD&T annotations per body
         self._gdt: dict[str, Any] = {}  # body name → GDTAnnotationSet
@@ -186,6 +188,12 @@ class ModelingSession:
         self._bodies[name] = new_shape
         self._graphs[name] = None  # invalidate
         self._log.append(op)
+
+        # Record in parametric engine (captures @param bindings)
+        op_index = self._log.length - 1
+        self._parametric.record_operation(
+            op_index, op.op_type, op.params, op.description,
+        )
 
         g = self.graph
         result = {
@@ -586,34 +594,192 @@ class ModelingSession:
         return result.to_dict()
 
     # ------------------------------------------------------------------
-    # PARAMETRIC DIMENSIONS
+    # PARAMETRIC ENGINE
     # ------------------------------------------------------------------
 
-    def set_parameter(self, name: str, value: float, description: str = "") -> dict[str, Any]:
-        """Define or update a named design parameter."""
+    def set_parameter(self, name: str, value: float, description: str = "", unit: str = "mm") -> dict[str, Any]:
+        """Define or update a named design parameter.
+
+        Parameters can be referenced in operations using @name syntax.
+        Changing a parameter triggers selective replay of affected operations.
+        """
+        self._parametric.define(name, value, description, unit)
+        # Legacy compat
         self._parameters[name] = {"value": value, "description": description}
         return {
             "name": name,
             "value": value,
             "description": description,
-            "total_parameters": len(self._parameters),
+            "unit": unit,
+            "total_parameters": len(self._parametric.parameters),
         }
 
     def get_parameters(self) -> dict[str, Any]:
-        """Get all named design parameters."""
+        """Get all named design parameters with dependency info."""
+        deps = self._parametric.dependency_graph()
         return {
-            "count": len(self._parameters),
+            "count": len(self._parametric.parameters),
             "parameters": {
-                name: {"value": p["value"], "description": p["description"]}
-                for name, p in self._parameters.items()
+                name: {
+                    "value": p.value,
+                    "description": p.description,
+                    "unit": p.unit,
+                    "used_by_operations": deps.get(name, []),
+                }
+                for name, p in self._parametric.parameters.items()
             },
         }
 
     def get_parameter(self, name: str) -> float:
         """Get a single parameter value. Raises if not found."""
-        if name not in self._parameters:
-            raise ModelingError(f"Parameter '{name}' not found. Available: {', '.join(self._parameters)}")
-        return self._parameters[name]["value"]
+        try:
+            return self._parametric.get(name)
+        except KeyError:
+            raise ModelingError(
+                f"Parameter '{name}' not found. "
+                f"Available: {', '.join(self._parametric.parameters)}"
+            )
+
+    def update_parameter(self, name: str, new_value: float) -> dict[str, Any]:
+        """Change a parameter and selectively replay affected operations.
+
+        This is the core of parametric design: change one dimension,
+        and only the operations that depend on it are re-executed.
+
+        Returns:
+            Dict with changed parameter, affected operations, and replay result.
+        """
+        if name not in self._parametric.parameters:
+            raise ModelingError(f"Parameter '{name}' not defined.")
+
+        old_value = self._parametric.get(name)
+        affected_indices = self._parametric.change_parameter(name, new_value)
+
+        # Legacy compat
+        self._parameters[name] = {
+            "value": new_value,
+            "description": self._parametric.parameters[name].description,
+        }
+
+        if not affected_indices:
+            return {
+                "parameter": name,
+                "old_value": old_value,
+                "new_value": new_value,
+                "affected_operations": 0,
+                "message": "No operations depend on this parameter.",
+            }
+
+        # Get the replay plan with resolved values
+        replay_plan = self._parametric.get_replay_plan([name])
+
+        # Execute the replay: undo back to earliest affected, then replay
+        body_name = self._active_body
+        history = self._histories.get(body_name, [])
+
+        # We need to undo to just before the earliest affected operation
+        # Count how many ops to undo from current state
+        total_ops = self._log.length
+        earliest = affected_indices[0]
+        ops_to_undo = total_ops - earliest
+
+        # Undo affected operations
+        for _ in range(min(ops_to_undo, len(history))):
+            self._bodies[body_name] = history.pop()
+            self._graphs[body_name] = None
+            self._log.pop()
+
+        # Replay with new parameter values
+        replayed = 0
+        for step in replay_plan:
+            params = step["params"]
+            op_type = step["op_type"]
+            try:
+                self._replay_operation(op_type, params)
+                replayed += 1
+            except Exception as e:
+                return {
+                    "parameter": name,
+                    "old_value": old_value,
+                    "new_value": new_value,
+                    "affected_operations": len(affected_indices),
+                    "replayed": replayed,
+                    "error": f"Replay failed at op {step['op_index']}: {e}",
+                }
+
+        g = self.graph
+        return {
+            "parameter": name,
+            "old_value": old_value,
+            "new_value": new_value,
+            "affected_operations": len(affected_indices),
+            "replayed": replayed,
+            "faces": len(g.faces),
+            "features": len(g.features),
+        }
+
+    def _replay_operation(self, op_type: str, params: dict[str, Any]) -> None:
+        """Replay a single operation with given parameters."""
+        # Map op_type strings to session methods
+        replay_map: dict[str, Callable] = {
+            "create_box": lambda p: self.create_box(p["length"], p["width"], p["height"],
+                                                     tuple(p.get("center", [0, 0, 0]))),
+            "create_cylinder": lambda p: self.create_cylinder(p["radius"], p["height"],
+                                                               tuple(p.get("center", [0, 0, 0])),
+                                                               p.get("axis", "Z")),
+            "create_sphere": lambda p: self.create_sphere(p["radius"],
+                                                           tuple(p.get("center", [0, 0, 0]))),
+            "add_hole": lambda p: self.add_hole(p["center_x"], p["center_y"], p["diameter"],
+                                                 p.get("depth"), p.get("face_selector", ">Z")),
+            "add_pocket": lambda p: self.add_pocket(p["center_x"], p["center_y"],
+                                                     p["length"], p["width"], p["depth"],
+                                                     p.get("face_selector", ">Z")),
+            "add_boss": lambda p: self.add_boss(p["center_x"], p["center_y"],
+                                                 p["diameter"], p["height"],
+                                                 p.get("face_selector", ">Z")),
+            "add_fillet": lambda p: self.add_fillet(p["radius"], p.get("edge_selector")),
+            "add_chamfer": lambda p: self.add_chamfer(p["distance"], p.get("edge_selector")),
+            "add_shell": lambda p: self.add_shell(p["thickness"], p.get("face_selector", ">Z")),
+            "add_slot": lambda p: self.add_slot(p["center_x"], p["center_y"],
+                                                 p["length"], p["width"], p["depth"],
+                                                 p.get("angle", 0), p.get("face_selector", ">Z")),
+        }
+
+        handler = replay_map.get(op_type)
+        if handler is None:
+            raise ModelingError(f"Cannot replay operation type: {op_type}")
+        handler(params)
+
+    def get_dependency_graph(self) -> dict[str, Any]:
+        """Get the parameter → operation dependency graph."""
+        return self._parametric.dependency_graph()
+
+    def design_table(
+        self,
+        param_ranges: dict[str, list[float]],
+    ) -> dict[str, Any]:
+        """Generate design variants from parameter combinations.
+
+        Example:
+            design_table({"wall_t": [2, 3, 4], "bolt_d": [4, 6]})
+            → 6 variants, each with resolved operation parameters
+
+        The AI can then replay each variant to generate separate STEP files.
+        """
+        try:
+            variants = self._parametric.design_table(param_ranges)
+        except KeyError as e:
+            raise ModelingError(str(e))
+
+        return {
+            "variant_count": len(variants),
+            "parameters_varied": list(param_ranges.keys()),
+            "variants": variants,
+        }
+
+    def get_parametric_state(self) -> dict[str, Any]:
+        """Get the full parametric state: parameters, bindings, dependencies."""
+        return self._parametric.to_dict()
 
     # ------------------------------------------------------------------
     # GD&T ANNOTATIONS

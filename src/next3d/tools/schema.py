@@ -436,6 +436,33 @@ class ExportAssembly(BaseModel):
     output_path: str = Field(..., description="Output STEP file path")
 
 
+class UpdateParameter(BaseModel):
+    """Change a parameter value and selectively replay affected operations.
+
+    This is parametric design: change wall_thickness from 3 to 2, and only
+    the shell operation re-executes. Everything else stays untouched."""
+
+    name: str = Field(..., description="Parameter name to change")
+    new_value: float = Field(..., description="New value")
+
+
+class DesignTable(BaseModel):
+    """Generate design variants from parameter combinations.
+
+    Example: {"wall_t": [2, 3, 4], "bolt_d": [4, 6]} → 6 variants,
+    each with fully resolved operation parameters ready for replay."""
+
+    param_ranges: dict[str, list[float]] = Field(
+        ...,
+        description="Parameter name → list of values to try. All combinations are generated.",
+    )
+
+
+class GetParametricState(BaseModel):
+    """Get full parametric state: parameters, operation bindings, dependency graph."""
+    pass
+
+
 class CheckDesignRules(BaseModel):
     """Check the active body against manufacturing design rules.
 
@@ -743,6 +770,9 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "check_design_rules": CheckDesignRules,
     "set_parameter": SetParameter,
     "get_parameters": GetParameters,
+    "update_parameter": UpdateParameter,
+    "design_table": DesignTable,
+    "get_parametric_state": GetParametricState,
     # Multi-body
     "create_named_body": CreateNamedBody,
     "set_active_body": SetActiveBody,

@@ -742,8 +742,40 @@ def set_parameter(
 
 @mcp.tool()
 def get_parameters() -> str:
-    """Get all named design parameters."""
+    """Get all named design parameters with dependency info."""
     r = _executor.call("get_parameters", {})
+    return _format_result(r)
+
+
+@mcp.tool()
+def update_parameter(name: str, new_value: float) -> str:
+    """Change a parameter and selectively replay affected operations.
+
+    Parametric design: change one value, only dependent operations re-execute.
+
+    Args:
+        name: Parameter to change
+        new_value: New value
+    """
+    r = _executor.call("update_parameter", {"name": name, "new_value": new_value})
+    return _format_result(r)
+
+
+@mcp.tool()
+def design_table(param_ranges: dict) -> str:
+    """Generate design variants from parameter combinations.
+
+    Args:
+        param_ranges: {param_name: [val1, val2, ...]} — all combos generated
+    """
+    r = _executor.call("design_table", {"param_ranges": param_ranges})
+    return _format_result(r)
+
+
+@mcp.tool()
+def get_parametric_state() -> str:
+    """Get full parametric state: parameters, bindings, dependency graph."""
+    r = _executor.call("get_parametric_state", {})
     return _format_result(r)
 
 
