@@ -610,6 +610,76 @@ class TestInteractiveSheetMetal:
         assert r.success
 
 
+class TestBendingPlanner:
+    def test_plan_single_bend(self):
+        """L-bracket: 1 bend, verify tonnage > 0 and v_die_width > 0."""
+        s = ModelingSession()
+        s.sheet_metal_define(2.0, material="steel_mild")
+        s.sheet_metal_add_flat(50, 100)
+        s.sheet_metal_add_bend(90)
+        s.sheet_metal_add_flat(30, 100)
+        plan = s.sheet_metal_plan_bending()
+        assert plan["total_bends"] == 1
+        op = plan["operations"][0]
+        assert op["tonnage_metric_tons"] > 0
+        assert op["v_die_width_mm"] > 0
+        assert op["punch_radius_mm"] > 0
+        assert op["step"] == 1
+
+    def test_plan_multi_bend_order(self):
+        """U-channel: 2 bends, shorter flange bent first."""
+        s = ModelingSession()
+        s.sheet_metal_define(1.5, material="steel_mild")
+        # flat 20mm -> bend -> flat 60mm -> bend -> flat 40mm
+        # Bend at index 1: left_flange=20, right_flange=60 -> shorter=20
+        # Bend at index 3: left_flange=60, right_flange=40 -> shorter=40
+        s.sheet_metal_add_flat(20, 100)
+        s.sheet_metal_add_bend(90)
+        s.sheet_metal_add_flat(60, 100)
+        s.sheet_metal_add_bend(90)
+        s.sheet_metal_add_flat(40, 100)
+        plan = s.sheet_metal_plan_bending()
+        assert plan["total_bends"] == 2
+        ops = plan["operations"]
+        # First operation should be the bend with shorter flange (20mm side)
+        assert ops[0]["segment_index"] == 1  # bend adjacent to 20mm flat
+        assert ops[1]["segment_index"] == 3  # bend adjacent to 40mm flat
+
+    def test_plan_via_executor(self):
+        """Test through ToolExecutor."""
+        ex = ToolExecutor()
+        ex.call("sheet_metal_define", {"thickness": 2.0, "material": "steel_mild"})
+        ex.call("sheet_metal_add_flat", {"length": 50, "width": 100})
+        ex.call("sheet_metal_add_bend", {"angle": 90})
+        ex.call("sheet_metal_add_flat", {"length": 30, "width": 100})
+        r = ex.call("sheet_metal_plan_bending", {})
+        assert r.success
+        assert r.data["total_bends"] == 1
+        assert r.data["operations"][0]["tonnage_metric_tons"] > 0
+
+    def test_tonnage_varies_by_material(self):
+        """Same geometry, steel vs aluminum — steel needs more tonnage."""
+        # Steel
+        s_steel = ModelingSession()
+        s_steel.sheet_metal_define(2.0, material="steel_mild")
+        s_steel.sheet_metal_add_flat(50, 100)
+        s_steel.sheet_metal_add_bend(90)
+        s_steel.sheet_metal_add_flat(30, 100)
+        plan_steel = s_steel.sheet_metal_plan_bending()
+
+        # Aluminum
+        s_alu = ModelingSession()
+        s_alu.sheet_metal_define(2.0, material="aluminum")
+        s_alu.sheet_metal_add_flat(50, 100)
+        s_alu.sheet_metal_add_bend(90)
+        s_alu.sheet_metal_add_flat(30, 100)
+        plan_alu = s_alu.sheet_metal_plan_bending()
+
+        steel_tonnage = plan_steel["operations"][0]["tonnage_metric_tons"]
+        alu_tonnage = plan_alu["operations"][0]["tonnage_metric_tons"]
+        assert steel_tonnage > alu_tonnage
+
+
 class TestDimensions:
     def test_add_dimension(self):
         s = ModelingSession()
@@ -1751,3 +1821,378 @@ class TestTopologyOptimization:
 
         # Volume consistency
         assert result["total_voxels"] == result["kept_voxels"] + result["removal_regions_count"]
+
+
+# ---------------------------------------------------------------------------
+# Interactivity gap tests — query/modify/remove for all features
+# ---------------------------------------------------------------------------
+
+class TestGDTInteractivity:
+    """Test GD&T datum/tolerance removal and modification."""
+
+    def test_remove_datum(self):
+        executor = ToolExecutor()
+        executor.call("create_box", {"length": 100, "width": 60, "height": 20})
+        executor.call("add_datum", {"label": "A", "entity_id": "face_1", "description": "Primary"})
+        executor.call("add_datum", {"label": "B", "entity_id": "face_2", "description": "Secondary"})
+
+        result = executor.call("remove_datum", {"label": "A"})
+        assert result.success
+        assert result.data["removed_label"] == "A"
+        assert result.data["remaining_datums"] == 1
+
+    def test_remove_datum_not_found(self):
+        executor = ToolExecutor()
+        executor.call("create_box", {"length": 100, "width": 60, "height": 20})
+        result = executor.call("remove_datum", {"label": "Z"})
+        assert not result.success
+
+    def test_remove_tolerance(self):
+        executor = ToolExecutor()
+        executor.call("create_box", {"length": 100, "width": 60, "height": 20})
+        executor.call("add_tolerance", {
+            "tolerance_type": "flatness", "value": 0.05,
+            "entity_id": "face_1", "datum_refs": [], "material_condition": "",
+            "description": "",
+        })
+        executor.call("add_tolerance", {
+            "tolerance_type": "circularity", "value": 0.025,
+            "entity_id": "face_2", "datum_refs": [], "material_condition": "",
+            "description": "",
+        })
+
+        result = executor.call("remove_tolerance", {"index": 0})
+        assert result.success
+        assert result.data["removed_type"] == "flatness"
+        assert result.data["remaining_tolerances"] == 1
+
+    def test_remove_tolerance_out_of_range(self):
+        executor = ToolExecutor()
+        executor.call("create_box", {"length": 100, "width": 60, "height": 20})
+        result = executor.call("remove_tolerance", {"index": 5})
+        assert not result.success
+
+    def test_modify_tolerance(self):
+        executor = ToolExecutor()
+        executor.call("create_box", {"length": 100, "width": 60, "height": 20})
+        executor.call("add_tolerance", {
+            "tolerance_type": "flatness", "value": 0.05,
+            "entity_id": "face_1", "datum_refs": [], "material_condition": "",
+            "description": "",
+        })
+
+        result = executor.call("modify_tolerance", {"index": 0, "value": 0.1})
+        assert result.success
+        assert result.data["old_value"] == 0.05
+        assert result.data["new_value"] == 0.1
+
+    def test_modify_tolerance_material_condition(self):
+        executor = ToolExecutor()
+        executor.call("create_box", {"length": 100, "width": 60, "height": 20})
+        executor.call("add_datum", {"label": "A", "entity_id": "face_1", "description": ""})
+        executor.call("add_tolerance", {
+            "tolerance_type": "position", "value": 0.1,
+            "entity_id": "face_2", "datum_refs": ["A"], "material_condition": "",
+            "description": "",
+        })
+
+        result = executor.call("modify_tolerance", {
+            "index": 0, "material_condition": "MMC",
+        })
+        assert result.success
+
+
+class TestLoadBCInteractivity:
+    """Test load and boundary condition listing, removal, and modification."""
+
+    def test_list_loads_empty(self):
+        executor = ToolExecutor()
+        result = executor.call("list_loads", {})
+        assert result.success
+        assert result.data["count"] == 0
+
+    def test_list_loads_after_adding(self):
+        executor = ToolExecutor()
+        executor.call("add_load", {"name": "push", "fx": 0, "fy": 0, "fz": -100, "px": 0, "py": 0, "pz": 10})
+        executor.call("add_load", {"name": "pull", "fx": 50, "fy": 0, "fz": 0, "px": 0, "py": 0, "pz": 0})
+
+        result = executor.call("list_loads", {})
+        assert result.success
+        assert result.data["count"] == 2
+        assert result.data["loads"][0]["name"] == "push"
+        assert result.data["loads"][1]["name"] == "pull"
+
+    def test_remove_load(self):
+        executor = ToolExecutor()
+        executor.call("add_load", {"name": "push", "fx": 0, "fy": 0, "fz": -100, "px": 0, "py": 0, "pz": 10})
+        executor.call("add_load", {"name": "pull", "fx": 50, "fy": 0, "fz": 0, "px": 0, "py": 0, "pz": 0})
+
+        result = executor.call("remove_load", {"name": "push"})
+        assert result.success
+        assert result.data["remaining_loads"] == 1
+
+        # Verify it's gone
+        loads = executor.call("list_loads", {})
+        assert loads.data["count"] == 1
+        assert loads.data["loads"][0]["name"] == "pull"
+
+    def test_remove_load_not_found(self):
+        executor = ToolExecutor()
+        result = executor.call("remove_load", {"name": "nonexistent"})
+        assert not result.success
+
+    def test_modify_load(self):
+        executor = ToolExecutor()
+        executor.call("add_load", {"name": "push", "fx": 0, "fy": 0, "fz": -100, "px": 0, "py": 0, "pz": 10})
+
+        result = executor.call("modify_load", {"name": "push", "fz": -200})
+        assert result.success
+        assert result.data["force"]["z"] == -200
+        # Other components unchanged
+        assert result.data["force"]["x"] == 0
+        assert result.data["force"]["y"] == 0
+
+    def test_list_boundary_conditions_empty(self):
+        executor = ToolExecutor()
+        result = executor.call("list_boundary_conditions", {})
+        assert result.success
+        assert result.data["count"] == 0
+
+    def test_list_boundary_conditions_after_adding(self):
+        executor = ToolExecutor()
+        executor.call("create_box", {"length": 100, "width": 60, "height": 20})
+        executor.call("add_boundary_condition", {"name": "base", "bc_type": "fixed", "face_selector": "<Z"})
+
+        result = executor.call("list_boundary_conditions", {})
+        assert result.success
+        assert result.data["count"] == 1
+        assert result.data["boundary_conditions"][0]["name"] == "base"
+
+    def test_remove_boundary_condition(self):
+        executor = ToolExecutor()
+        executor.call("create_box", {"length": 100, "width": 60, "height": 20})
+        executor.call("add_boundary_condition", {"name": "base", "bc_type": "fixed", "face_selector": "<Z"})
+        executor.call("add_boundary_condition", {"name": "roller", "bc_type": "roller", "face_selector": ">X"})
+
+        result = executor.call("remove_boundary_condition", {"name": "base"})
+        assert result.success
+        assert result.data["remaining_boundary_conditions"] == 1
+
+    def test_remove_boundary_condition_not_found(self):
+        executor = ToolExecutor()
+        result = executor.call("remove_boundary_condition", {"name": "nonexistent"})
+        assert not result.success
+
+
+class TestMateInteractivity:
+    """Test assembly mate listing and removal."""
+
+    def test_list_mates_empty(self):
+        executor = ToolExecutor()
+        result = executor.call("list_mates", {})
+        assert result.success
+        assert result.data["count"] == 0
+
+    def test_list_mates_after_adding(self):
+        executor = ToolExecutor()
+        executor.call("create_named_body", {
+            "name": "bracket", "shape_type": "box",
+            "length": 100, "width": 60, "height": 20,
+        })
+        executor.call("create_named_body", {
+            "name": "shaft", "shape_type": "cylinder",
+            "radius": 5, "height": 50,
+        })
+        executor.call("add_mate_constraint", {
+            "mate_type": "coincident",
+            "body_a": "bracket", "entity_a": "face_1",
+            "body_b": "shaft", "entity_b": "face_2",
+        })
+
+        result = executor.call("list_mates", {})
+        assert result.success
+        assert result.data["count"] == 1
+        assert result.data["mates"][0]["mate_type"] == "coincident"
+
+    def test_remove_mate(self):
+        executor = ToolExecutor()
+        executor.call("create_named_body", {
+            "name": "a", "shape_type": "box",
+            "length": 10, "width": 10, "height": 10,
+        })
+        executor.call("create_named_body", {
+            "name": "b", "shape_type": "box",
+            "length": 10, "width": 10, "height": 10,
+        })
+        executor.call("add_mate_constraint", {
+            "mate_type": "coincident",
+            "body_a": "a", "entity_a": "f1",
+            "body_b": "b", "entity_b": "f2",
+        })
+
+        result = executor.call("remove_mate", {"index": 0})
+        assert result.success
+        assert result.data["remaining_mates"] == 0
+
+    def test_remove_mate_out_of_range(self):
+        executor = ToolExecutor()
+        result = executor.call("remove_mate", {"index": 0})
+        assert not result.success
+
+
+class TestParameterInteractivity:
+    """Test parameter removal."""
+
+    def test_remove_parameter(self):
+        executor = ToolExecutor()
+        executor.call("set_parameter", {"name": "wall_t", "value": 3.0, "description": "Wall thickness"})
+        executor.call("set_parameter", {"name": "bolt_d", "value": 6.0, "description": "Bolt diameter"})
+
+        result = executor.call("remove_parameter", {"name": "wall_t"})
+        assert result.success
+        assert result.data["old_value"] == 3.0
+        assert result.data["remaining_parameters"] == 1
+
+        # Verify it's gone
+        params = executor.call("get_parameters", {})
+        assert params.data["count"] == 1
+        assert "wall_t" not in params.data["parameters"]
+        assert "bolt_d" in params.data["parameters"]
+
+    def test_remove_parameter_not_found(self):
+        executor = ToolExecutor()
+        result = executor.call("remove_parameter", {"name": "nonexistent"})
+        assert not result.success
+
+
+class TestDimensionInteractivity:
+    """Test dimension removal and modification."""
+
+    def test_remove_dimension(self):
+        executor = ToolExecutor()
+        executor.call("create_box", {"length": 100, "width": 60, "height": 20})
+        add_result = executor.call("add_dimension", {
+            "dim_type": "linear", "value": 100.0,
+            "entity_ids": [], "label": "Length",
+            "tolerance_plus": 0.1, "tolerance_minus": 0.1,
+        })
+        dim_id = add_result.data["dim_id"]
+
+        result = executor.call("remove_dimension", {"dim_id": dim_id})
+        assert result.success
+        assert result.data["remaining_dimensions"] == 0
+
+    def test_remove_dimension_not_found(self):
+        executor = ToolExecutor()
+        executor.call("create_box", {"length": 100, "width": 60, "height": 20})
+        result = executor.call("remove_dimension", {"dim_id": "dim_999"})
+        assert not result.success
+
+    def test_modify_dimension_value(self):
+        executor = ToolExecutor()
+        executor.call("create_box", {"length": 100, "width": 60, "height": 20})
+        add_result = executor.call("add_dimension", {
+            "dim_type": "linear", "value": 100.0,
+            "entity_ids": [], "label": "Length",
+            "tolerance_plus": 0.0, "tolerance_minus": 0.0,
+        })
+        dim_id = add_result.data["dim_id"]
+
+        result = executor.call("modify_dimension", {
+            "dim_id": dim_id, "value": 120.0,
+        })
+        assert result.success
+        assert result.data["value"] == 120.0
+
+    def test_modify_dimension_tolerance(self):
+        executor = ToolExecutor()
+        executor.call("create_box", {"length": 100, "width": 60, "height": 20})
+        add_result = executor.call("add_dimension", {
+            "dim_type": "diametral", "value": 10.0,
+            "entity_ids": [], "label": "",
+            "tolerance_plus": 0.0, "tolerance_minus": 0.0,
+        })
+        dim_id = add_result.data["dim_id"]
+
+        result = executor.call("modify_dimension", {
+            "dim_id": dim_id, "tolerance_plus": 0.05, "tolerance_minus": 0.02,
+        })
+        assert result.success
+        assert result.data["tolerance"]["plus"] == 0.05
+        assert result.data["tolerance"]["minus"] == 0.02
+
+    def test_modify_dimension_not_found(self):
+        executor = ToolExecutor()
+        executor.call("create_box", {"length": 100, "width": 60, "height": 20})
+        result = executor.call("modify_dimension", {"dim_id": "dim_999", "value": 1.0})
+        assert not result.success
+
+
+class TestListStandardParts:
+    """Test standard parts listing."""
+
+    def test_list_standard_parts(self):
+        executor = ToolExecutor()
+        result = executor.call("list_standard_parts", {})
+        assert result.success
+        assert "hex_bolt" in result.data["part_types"]
+        assert "hex_nut" in result.data["part_types"]
+        assert "flat_washer" in result.data["part_types"]
+        assert "socket_head_cap_screw" in result.data["part_types"]
+        assert "M6" in result.data["sizes"]
+        assert result.data["size_count"] > 0
+
+
+class TestListDesignProcesses:
+    """Test design process listing."""
+
+    def test_list_design_processes(self):
+        executor = ToolExecutor()
+        result = executor.call("list_design_processes", {})
+        assert result.success
+        assert "cnc_milling" in result.data["processes"]
+        assert "injection_molding" in result.data["processes"]
+        assert result.data["count"] > 0
+
+
+class TestMeasureDistance:
+    """Test measure distance handler."""
+
+    def test_measure_distance(self):
+        executor = ToolExecutor()
+        executor.call("create_box", {"length": 100, "width": 60, "height": 20})
+        # Get face IDs
+        features = executor.call("find_faces", {"surface_type": "plane"})
+        faces = features.data["faces"]
+        if len(faces) >= 2:
+            result = executor.call("measure_distance", {
+                "entity_id_a": faces[0]["id"],
+                "entity_id_b": faces[1]["id"],
+            })
+            assert result.success
+            assert "distance_mm" in result.data
+
+    def test_measure_distance_not_found(self):
+        executor = ToolExecutor()
+        executor.call("create_box", {"length": 100, "width": 60, "height": 20})
+        result = executor.call("measure_distance", {
+            "entity_id_a": "nonexistent_1",
+            "entity_id_b": "nonexistent_2",
+        })
+        assert not result.success
+
+
+class TestToolCount:
+    """Verify the expected tool count after adding interactivity tools."""
+
+    def test_all_tools_have_handlers(self):
+        executor = ToolExecutor()
+        missing = []
+        for name in TOOL_SCHEMAS:
+            handler = getattr(executor, f"_handle_{name}", None)
+            if handler is None:
+                missing.append(name)
+        assert missing == [], f"Missing handlers: {missing}"
+
+    def test_tool_count_is_98(self):
+        assert len(TOOL_SCHEMAS) == 99

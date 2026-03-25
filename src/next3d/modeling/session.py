@@ -909,6 +909,97 @@ class ModelingSession:
         result["body"] = self._active_body
         return result
 
+    def remove_datum(self, label: str) -> dict[str, Any]:
+        """Remove a datum reference by label from the active body's GD&T annotations.
+
+        Args:
+            label: Datum label to remove (e.g. "A", "B").
+        """
+        gdt_set = self._get_gdt_set()
+        original_count = len(gdt_set.datums)
+        gdt_set.datums = [d for d in gdt_set.datums if d.label != label]
+        removed = original_count - len(gdt_set.datums)
+        if removed == 0:
+            raise ModelingError(
+                f"Datum '{label}' not found. "
+                f"Available: {', '.join(d.label for d in gdt_set.datums) or 'none'}"
+            )
+        return {
+            "removed_label": label,
+            "remaining_datums": len(gdt_set.datums),
+            "body": self._active_body,
+        }
+
+    def remove_tolerance(self, index: int) -> dict[str, Any]:
+        """Remove a tolerance by its 0-based index from the active body's GD&T annotations.
+
+        Args:
+            index: 0-based index of the tolerance to remove.
+        """
+        gdt_set = self._get_gdt_set()
+        if index < 0 or index >= len(gdt_set.tolerances):
+            raise ModelingError(
+                f"Tolerance index {index} out of range. "
+                f"Have {len(gdt_set.tolerances)} tolerances (0-{len(gdt_set.tolerances) - 1})."
+            )
+        removed = gdt_set.tolerances.pop(index)
+        return {
+            "removed_type": removed.tolerance_type,
+            "removed_entity": removed.entity_id,
+            "remaining_tolerances": len(gdt_set.tolerances),
+            "body": self._active_body,
+        }
+
+    def modify_tolerance(
+        self,
+        index: int,
+        value: float | None = None,
+        datum_refs: list[str] | None = None,
+        material_condition: str | None = None,
+    ) -> dict[str, Any]:
+        """Modify an existing tolerance by its 0-based index.
+
+        Args:
+            index: 0-based index of the tolerance to modify.
+            value: New tolerance value in mm (if changing).
+            datum_refs: New datum references (if changing).
+            material_condition: New material condition (if changing).
+        """
+        from next3d.core.gdt import ToleranceZone, VALID_MATERIAL_CONDITIONS
+
+        gdt_set = self._get_gdt_set()
+        if index < 0 or index >= len(gdt_set.tolerances):
+            raise ModelingError(
+                f"Tolerance index {index} out of range. "
+                f"Have {len(gdt_set.tolerances)} tolerances (0-{len(gdt_set.tolerances) - 1})."
+            )
+        old = gdt_set.tolerances[index]
+        new_value = value if value is not None else old.value
+        new_refs = datum_refs if datum_refs is not None else old.datum_refs
+        new_mc = material_condition if material_condition is not None else old.material_condition
+
+        if new_value <= 0:
+            raise ModelingError(f"Tolerance value must be > 0, got: {new_value}")
+        if new_mc not in VALID_MATERIAL_CONDITIONS:
+            raise ModelingError(f"Invalid material condition: '{new_mc}'")
+
+        gdt_set.tolerances[index] = ToleranceZone(
+            tolerance_type=old.tolerance_type,
+            value=new_value,
+            entity_id=old.entity_id,
+            datum_refs=new_refs,
+            material_condition=new_mc,
+            description=old.description,
+        )
+        return {
+            "index": index,
+            "tolerance_type": old.tolerance_type,
+            "old_value": old.value,
+            "new_value": new_value,
+            "entity_id": old.entity_id,
+            "body": self._active_body,
+        }
+
     # ------------------------------------------------------------------
     # TOPOLOGY OPTIMIZATION
     # ------------------------------------------------------------------
@@ -1042,6 +1133,176 @@ class ModelingSession:
             "density_field": result.density_field,
             "suggestions": result.suggestions,
             "body": self._active_body,
+        }
+
+    def list_loads(self) -> dict[str, Any]:
+        """List all loads defined for topology optimization."""
+        loads = []
+        for load in self._loads:
+            loads.append({
+                "name": load.name,
+                "force": {"x": load.force[0], "y": load.force[1], "z": load.force[2]},
+                "application_point": {
+                    "x": load.application_point[0],
+                    "y": load.application_point[1],
+                    "z": load.application_point[2],
+                },
+            })
+        return {"count": len(loads), "loads": loads}
+
+    def remove_load(self, name: str) -> dict[str, Any]:
+        """Remove a load by name.
+
+        Args:
+            name: Load name to remove.
+        """
+        original_count = len(self._loads)
+        self._loads = [l for l in self._loads if l.name != name]
+        removed = original_count - len(self._loads)
+        if removed == 0:
+            raise ModelingError(
+                f"Load '{name}' not found. "
+                f"Available: {', '.join(l.name for l in self._loads) or 'none'}"
+            )
+        return {
+            "removed": name,
+            "remaining_loads": len(self._loads),
+        }
+
+    def modify_load(
+        self,
+        name: str,
+        fx: float | None = None,
+        fy: float | None = None,
+        fz: float | None = None,
+        px: float | None = None,
+        py: float | None = None,
+        pz: float | None = None,
+    ) -> dict[str, Any]:
+        """Modify an existing load's force or application point.
+
+        Args:
+            name: Load name to modify.
+            fx, fy, fz: New force components (None = keep existing).
+            px, py, pz: New application point (None = keep existing).
+        """
+        from next3d.core.topology_opt import LoadCase
+
+        for i, load in enumerate(self._loads):
+            if load.name == name:
+                new_force = (
+                    fx if fx is not None else load.force[0],
+                    fy if fy is not None else load.force[1],
+                    fz if fz is not None else load.force[2],
+                )
+                new_point = (
+                    px if px is not None else load.application_point[0],
+                    py if py is not None else load.application_point[1],
+                    pz if pz is not None else load.application_point[2],
+                )
+                self._loads[i] = LoadCase(
+                    name=name,
+                    force=new_force,
+                    application_point=new_point,
+                )
+                return {
+                    "name": name,
+                    "force": {"x": new_force[0], "y": new_force[1], "z": new_force[2]},
+                    "application_point": {"x": new_point[0], "y": new_point[1], "z": new_point[2]},
+                }
+        raise ModelingError(
+            f"Load '{name}' not found. "
+            f"Available: {', '.join(l.name for l in self._loads) or 'none'}"
+        )
+
+    def list_boundary_conditions(self) -> dict[str, Any]:
+        """List all boundary conditions defined for topology optimization."""
+        bcs = []
+        for bc in self._boundary_conditions:
+            bcs.append({
+                "name": bc.name,
+                "bc_type": bc.bc_type,
+                "face_selector": bc.face_selector,
+            })
+        return {"count": len(bcs), "boundary_conditions": bcs}
+
+    def remove_boundary_condition(self, name: str) -> dict[str, Any]:
+        """Remove a boundary condition by name.
+
+        Args:
+            name: BC name to remove.
+        """
+        original_count = len(self._boundary_conditions)
+        self._boundary_conditions = [
+            bc for bc in self._boundary_conditions if bc.name != name
+        ]
+        removed = original_count - len(self._boundary_conditions)
+        if removed == 0:
+            raise ModelingError(
+                f"Boundary condition '{name}' not found. "
+                f"Available: {', '.join(bc.name for bc in self._boundary_conditions) or 'none'}"
+            )
+        return {
+            "removed": name,
+            "remaining_boundary_conditions": len(self._boundary_conditions),
+        }
+
+    # ------------------------------------------------------------------
+    # ASSEMBLY — List / Remove mates
+    # ------------------------------------------------------------------
+
+    def list_mates(self) -> dict[str, Any]:
+        """List all assembly mate constraints."""
+        mates = []
+        for i, mate in enumerate(self._mates):
+            mates.append({
+                "index": i,
+                **mate.to_dict(),
+            })
+        return {"count": len(mates), "mates": mates}
+
+    def remove_mate(self, index: int) -> dict[str, Any]:
+        """Remove a mate constraint by its 0-based index.
+
+        Args:
+            index: 0-based index of the mate to remove.
+        """
+        if index < 0 or index >= len(self._mates):
+            raise ModelingError(
+                f"Mate index {index} out of range. "
+                f"Have {len(self._mates)} mates (0-{len(self._mates) - 1})."
+            )
+        removed = self._mates.pop(index)
+        return {
+            "removed_type": removed.mate_type,
+            "removed_bodies": f"{removed.body_a} / {removed.body_b}",
+            "remaining_mates": len(self._mates),
+        }
+
+    # ------------------------------------------------------------------
+    # PARAMETERS — Remove
+    # ------------------------------------------------------------------
+
+    def remove_parameter(self, name: str) -> dict[str, Any]:
+        """Remove a named design parameter.
+
+        Args:
+            name: Parameter name to remove.
+        """
+        # Check in parametric engine first (canonical source)
+        if name not in self._parametric.parameters:
+            raise ModelingError(
+                f"Parameter '{name}' not found. "
+                f"Available: {', '.join(self._parametric.parameters) or 'none'}"
+            )
+        old_value = self._parametric.parameters[name].value
+        del self._parametric._parameters[name]
+        # Legacy compat
+        self._parameters.pop(name, None)
+        return {
+            "removed": name,
+            "old_value": old_value,
+            "remaining_parameters": len(self._parametric.parameters),
         }
 
     # ------------------------------------------------------------------
@@ -1208,6 +1469,32 @@ class ModelingSession:
                                   self._sheet_metal_bend_radius, self._sheet_metal_k_factor)
         return estimate_sheet_metal_cost(fp)
 
+    def sheet_metal_plan_bending(self) -> dict[str, Any]:
+        """Plan the bending sequence for the current sheet metal part.
+
+        Returns a recommended bending order with tooling and tonnage per step.
+        """
+        from next3d.core.sheet_metal import plan_bending_operations
+        self._require_sheet_metal()
+        if not self._sheet_metal_segments:
+            raise ModelingError("No segments defined.")
+        bends = [s for s in self._sheet_metal_segments if s["type"] == "bend"]
+        if not bends:
+            raise ModelingError("No bends in current segments — nothing to plan.")
+        operations = plan_bending_operations(
+            self._sheet_metal_segments,
+            self._sheet_metal_thickness,
+            self._sheet_metal_bend_radius,
+            self._sheet_metal_k_factor,
+            self._sheet_metal_material,
+        )
+        return {
+            "total_bends": len(operations),
+            "material": self._sheet_metal_material,
+            "thickness_mm": self._sheet_metal_thickness,
+            "operations": [op.to_dict() for op in operations],
+        }
+
     # ------------------------------------------------------------------
     # DIMENSIONS
     # ------------------------------------------------------------------
@@ -1254,6 +1541,76 @@ class ModelingSession:
             "count": len(dims),
             "dimensions": [d.to_dict() for d in dims],
         }
+
+    # ------------------------------------------------------------------
+    # DIMENSIONS — Remove / Modify
+    # ------------------------------------------------------------------
+
+    def remove_dimension(self, dim_id: str) -> dict[str, Any]:
+        """Remove a dimension annotation by its ID.
+
+        Args:
+            dim_id: Dimension ID to remove (e.g. "dim_1").
+        """
+        if not hasattr(self, '_dimensions'):
+            self._dimensions: dict[str, Any] = {}
+        name = self._active_body
+        ds = self._dimensions.get(name)
+        if ds is None:
+            raise ModelingError("No dimensions on active body.")
+        original_count = len(ds._dimensions)
+        ds._dimensions = [d for d in ds._dimensions if d.dim_id != dim_id]
+        removed = original_count - len(ds._dimensions)
+        if removed == 0:
+            available = ', '.join(d.dim_id for d in ds._dimensions) or 'none'
+            raise ModelingError(f"Dimension '{dim_id}' not found. Available: {available}")
+        return {
+            "removed": dim_id,
+            "remaining_dimensions": len(ds._dimensions),
+            "body": self._active_body,
+        }
+
+    def modify_dimension(
+        self,
+        dim_id: str,
+        value: float | None = None,
+        tolerance_plus: float | None = None,
+        tolerance_minus: float | None = None,
+        label: str | None = None,
+    ) -> dict[str, Any]:
+        """Modify an existing dimension annotation.
+
+        Args:
+            dim_id: Dimension ID to modify.
+            value: New value (None = keep existing).
+            tolerance_plus: New plus tolerance (None = keep existing).
+            tolerance_minus: New minus tolerance (None = keep existing).
+            label: New label (None = keep existing).
+        """
+        from next3d.core.dimensions import Dimension
+
+        if not hasattr(self, '_dimensions'):
+            self._dimensions: dict[str, Any] = {}
+        name = self._active_body
+        ds = self._dimensions.get(name)
+        if ds is None:
+            raise ModelingError("No dimensions on active body.")
+
+        for i, d in enumerate(ds._dimensions):
+            if d.dim_id == dim_id:
+                ds._dimensions[i] = Dimension(
+                    dim_id=d.dim_id,
+                    dim_type=d.dim_type,
+                    value=value if value is not None else d.value,
+                    entity_ids=d.entity_ids,
+                    label=label if label is not None else d.label,
+                    tolerance_plus=tolerance_plus if tolerance_plus is not None else d.tolerance_plus,
+                    tolerance_minus=tolerance_minus if tolerance_minus is not None else d.tolerance_minus,
+                )
+                return ds._dimensions[i].to_dict()
+
+        available = ', '.join(d.dim_id for d in ds._dimensions) or 'none'
+        raise ModelingError(f"Dimension '{dim_id}' not found. Available: {available}")
 
     # ------------------------------------------------------------------
     # ENGINEERING DRAWINGS

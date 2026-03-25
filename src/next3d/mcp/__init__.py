@@ -782,6 +782,16 @@ def sheet_metal_get_cost() -> str:
     return _format_result(r)
 
 @mcp.tool()
+def sheet_metal_plan_bending() -> str:
+    """Plan bending sequence for current sheet metal part.
+
+    Returns recommended bend order, V-die width, press brake tonnage,
+    and collision warnings for each bend operation.
+    """
+    r = _executor.call("sheet_metal_plan_bending", {})
+    return _format_result(r)
+
+@mcp.tool()
 def create_sheet_metal(width: float, length: float, thickness: float) -> str:
     """Create a flat sheet metal blank.
 
@@ -1509,6 +1519,50 @@ def suggest_gdt() -> str:
     return _format_result(r)
 
 
+@mcp.tool()
+def remove_datum(label: str) -> str:
+    """Remove a GD&T datum reference by label.
+
+    Args:
+        label: Datum label to remove (e.g. 'A', 'B')
+    """
+    r = _executor.call("remove_datum", {"label": label})
+    return _format_result(r)
+
+
+@mcp.tool()
+def remove_tolerance(index: int) -> str:
+    """Remove a GD&T tolerance by its 0-based index. Use get_gdt to see indices.
+
+    Args:
+        index: 0-based index of the tolerance to remove
+    """
+    r = _executor.call("remove_tolerance", {"index": index})
+    return _format_result(r)
+
+
+@mcp.tool()
+def modify_tolerance(
+    index: int,
+    value: float | None = None,
+    datum_refs: list[str] | None = None,
+    material_condition: str | None = None,
+) -> str:
+    """Modify an existing GD&T tolerance value, datum refs, or material condition.
+
+    Args:
+        index: 0-based index of the tolerance to modify
+        value: New tolerance value in mm (null = keep current)
+        datum_refs: New datum references (null = keep current)
+        material_condition: 'MMC', 'LMC', 'RFS', or '' (null = keep current)
+    """
+    r = _executor.call("modify_tolerance", {
+        "index": index, "value": value,
+        "datum_refs": datum_refs, "material_condition": material_condition,
+    })
+    return _format_result(r)
+
+
 # ---------------------------------------------------------------------------
 # TOPOLOGY OPTIMIZATION tools
 # ---------------------------------------------------------------------------
@@ -1581,6 +1635,171 @@ def run_topology_optimization(
     """
     r = _executor.call("run_topology_optimization", {
         "volume_fraction": volume_fraction, "resolution": resolution,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def list_loads() -> str:
+    """List all loads defined for topology optimization."""
+    r = _executor.call("list_loads", {})
+    return _format_result(r)
+
+
+@mcp.tool()
+def remove_load(name: str) -> str:
+    """Remove a load by name.
+
+    Args:
+        name: Load name to remove
+    """
+    r = _executor.call("remove_load", {"name": name})
+    return _format_result(r)
+
+
+@mcp.tool()
+def modify_load(
+    name: str,
+    fx: float | None = None,
+    fy: float | None = None,
+    fz: float | None = None,
+    px: float | None = None,
+    py: float | None = None,
+    pz: float | None = None,
+) -> str:
+    """Modify an existing load's force or application point.
+
+    Args:
+        name: Load name to modify
+        fx: New force X (null = keep current)
+        fy: New force Y (null = keep current)
+        fz: New force Z (null = keep current)
+        px: New application point X (null = keep current)
+        py: New application point Y (null = keep current)
+        pz: New application point Z (null = keep current)
+    """
+    r = _executor.call("modify_load", {
+        "name": name, "fx": fx, "fy": fy, "fz": fz,
+        "px": px, "py": py, "pz": pz,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def list_boundary_conditions() -> str:
+    """List all boundary conditions defined for topology optimization."""
+    r = _executor.call("list_boundary_conditions", {})
+    return _format_result(r)
+
+
+@mcp.tool()
+def remove_boundary_condition(name: str) -> str:
+    """Remove a boundary condition by name.
+
+    Args:
+        name: BC name to remove
+    """
+    r = _executor.call("remove_boundary_condition", {"name": name})
+    return _format_result(r)
+
+
+# ---------------------------------------------------------------------------
+# ASSEMBLY interactivity tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def list_mates() -> str:
+    """List all assembly mate constraints."""
+    r = _executor.call("list_mates", {})
+    return _format_result(r)
+
+
+@mcp.tool()
+def remove_mate(index: int) -> str:
+    """Remove a mate constraint by its 0-based index. Use list_mates to see indices.
+
+    Args:
+        index: 0-based index of the mate to remove
+    """
+    r = _executor.call("remove_mate", {"index": index})
+    return _format_result(r)
+
+
+@mcp.tool()
+def list_standard_parts() -> str:
+    """List available standard ISO metric fastener types and sizes."""
+    r = _executor.call("list_standard_parts", {})
+    return _format_result(r)
+
+
+# ---------------------------------------------------------------------------
+# PARAMETER / DIMENSION interactivity tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def remove_parameter(name: str) -> str:
+    """Remove a named design parameter.
+
+    Args:
+        name: Parameter name to remove
+    """
+    r = _executor.call("remove_parameter", {"name": name})
+    return _format_result(r)
+
+
+@mcp.tool()
+def remove_dimension(dim_id: str) -> str:
+    """Remove a dimension annotation by its ID. Use get_dimensions to see IDs.
+
+    Args:
+        dim_id: Dimension ID to remove (e.g. 'dim_1')
+    """
+    r = _executor.call("remove_dimension", {"dim_id": dim_id})
+    return _format_result(r)
+
+
+@mcp.tool()
+def modify_dimension(
+    dim_id: str,
+    value: float | None = None,
+    tolerance_plus: float | None = None,
+    tolerance_minus: float | None = None,
+    label: str | None = None,
+) -> str:
+    """Modify an existing dimension's value, tolerances, or label.
+
+    Args:
+        dim_id: Dimension ID to modify
+        value: New value in mm or degrees (null = keep current)
+        tolerance_plus: New plus tolerance (null = keep current)
+        tolerance_minus: New minus tolerance (null = keep current)
+        label: New label (null = keep current)
+    """
+    r = _executor.call("modify_dimension", {
+        "dim_id": dim_id, "value": value,
+        "tolerance_plus": tolerance_plus, "tolerance_minus": tolerance_minus,
+        "label": label,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def list_design_processes() -> str:
+    """List available manufacturing processes for design rule checking."""
+    r = _executor.call("list_design_processes", {})
+    return _format_result(r)
+
+
+@mcp.tool()
+def measure_distance(entity_id_a: str, entity_id_b: str) -> str:
+    """Measure the distance between two entities by persistent ID.
+
+    Args:
+        entity_id_a: Persistent ID of first entity
+        entity_id_b: Persistent ID of second entity
+    """
+    r = _executor.call("measure_distance", {
+        "entity_id_a": entity_id_a, "entity_id_b": entity_id_b,
     })
     return _format_result(r)
 

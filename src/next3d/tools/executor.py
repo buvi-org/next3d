@@ -301,6 +301,43 @@ class ToolExecutor:
     # SESSION handlers
     # ------------------------------------------------------------------
 
+    def _handle_measure_distance(self, p) -> ToolResult:
+        graph = self._session.graph
+        # Find the two entities by persistent_id and report their centroids
+        entity_a = None
+        entity_b = None
+        for f in graph.faces:
+            if f.persistent_id == p.entity_id_a:
+                entity_a = f
+            if f.persistent_id == p.entity_id_b:
+                entity_b = f
+        for e in graph.edges:
+            if e.persistent_id == p.entity_id_a:
+                entity_a = e
+            if e.persistent_id == p.entity_id_b:
+                entity_b = e
+
+        if entity_a is None:
+            return ToolResult(success=False, message=f"Entity '{p.entity_id_a}' not found")
+        if entity_b is None:
+            return ToolResult(success=False, message=f"Entity '{p.entity_id_b}' not found")
+
+        # Compute distance between centroids
+        ca = entity_a.centroid
+        cb = entity_b.centroid
+        dist = math.sqrt(
+            (ca.x - cb.x) ** 2 + (ca.y - cb.y) ** 2 + (ca.z - cb.z) ** 2
+        )
+        return ToolResult(
+            message=f"Distance: {dist:.4f}mm (centroid-to-centroid)",
+            data={
+                "distance_mm": round(dist, 4),
+                "entity_a": {"id": p.entity_id_a, "centroid": {"x": ca.x, "y": ca.y, "z": ca.z}},
+                "entity_b": {"id": p.entity_id_b, "centroid": {"x": cb.x, "y": cb.y, "z": cb.z}},
+                "method": "centroid_to_centroid",
+            },
+        )
+
     # ------------------------------------------------------------------
     # INTERACTIVE SHEET METAL handlers
     # ------------------------------------------------------------------
@@ -351,6 +388,12 @@ class ToolExecutor:
         data = self._session.sheet_metal_get_cost()
         return ToolResult(message=f"Cost: ${data['total_cost']}", data=data)
 
+    def _handle_sheet_metal_plan_bending(self, _p) -> ToolResult:
+        data = self._session.sheet_metal_plan_bending()
+        return ToolResult(
+            message=f"Bending plan: {data['total_bends']} operations", data=data,
+        )
+
     # ------------------------------------------------------------------
     # SHEET METAL (one-shot) handlers
     # ------------------------------------------------------------------
@@ -397,6 +440,18 @@ class ToolExecutor:
         data = self._session.auto_dimension()
         return ToolResult(message=f"Auto-generated {data['count']} dimensions", data=data)
 
+    def _handle_remove_dimension(self, p) -> ToolResult:
+        data = self._session.remove_dimension(p.dim_id)
+        return ToolResult(message=f"Removed dimension '{p.dim_id}'", data=data)
+
+    def _handle_modify_dimension(self, p) -> ToolResult:
+        data = self._session.modify_dimension(
+            p.dim_id, value=p.value,
+            tolerance_plus=p.tolerance_plus, tolerance_minus=p.tolerance_minus,
+            label=p.label,
+        )
+        return ToolResult(message=f"Modified dimension '{p.dim_id}'", data=data)
+
     def _handle_export_drawing(self, p) -> ToolResult:
         self._session.export_drawing(
             p.output_path, p.views, p.title, p.show_hidden,
@@ -425,6 +480,14 @@ class ToolExecutor:
         status = "PASSED" if data["passed"] else f"FAILED ({data['errors']} errors, {data['warnings']} warnings)"
         return ToolResult(message=f"Design check [{p.process}]: {status}", data=data)
 
+    def _handle_list_design_processes(self, _p) -> ToolResult:
+        from next3d.core.design_rules import list_available_processes
+        processes = list_available_processes()
+        return ToolResult(
+            message=f"{len(processes)} manufacturing processes available",
+            data={"processes": processes, "count": len(processes)},
+        )
+
     def _handle_set_parameter(self, p) -> ToolResult:
         data = self._session.set_parameter(p.name, p.value, p.description)
         return ToolResult(message=f"Parameter '{p.name}' = {p.value}", data=data)
@@ -451,6 +514,10 @@ class ToolExecutor:
     def _handle_get_parametric_state(self, _p) -> ToolResult:
         data = self._session.get_parametric_state()
         return ToolResult(message="Parametric state", data=data)
+
+    def _handle_remove_parameter(self, p) -> ToolResult:
+        data = self._session.remove_parameter(p.name)
+        return ToolResult(message=f"Removed parameter '{p.name}'", data=data)
 
     # ------------------------------------------------------------------
     # MULTI-BODY handlers
@@ -546,6 +613,26 @@ class ToolExecutor:
         )
         return ToolResult(message=f"Added {p.mate_type} mate: {p.body_a} ↔ {p.body_b}", data=data)
 
+    def _handle_list_mates(self, _p) -> ToolResult:
+        data = self._session.list_mates()
+        return ToolResult(message=f"{data['count']} mates", data=data)
+
+    def _handle_remove_mate(self, p) -> ToolResult:
+        data = self._session.remove_mate(p.index)
+        return ToolResult(
+            message=f"Removed mate #{p.index} ({data['removed_type']})", data=data,
+        )
+
+    def _handle_list_standard_parts(self, _p) -> ToolResult:
+        from next3d.parts.fasteners import ISO_METRIC
+        types = ["hex_bolt", "hex_nut", "flat_washer", "socket_head_cap_screw"]
+        data = {
+            "part_types": types,
+            "sizes": sorted(ISO_METRIC.keys()),
+            "size_count": len(ISO_METRIC),
+        }
+        return ToolResult(message=f"{len(types)} types, {len(ISO_METRIC)} sizes", data=data)
+
     # ------------------------------------------------------------------
     # SKETCH handlers
     # ------------------------------------------------------------------
@@ -619,6 +706,26 @@ class ToolExecutor:
             data=data,
         )
 
+    def _handle_remove_datum(self, p) -> ToolResult:
+        data = self._session.remove_datum(p.label)
+        return ToolResult(message=f"Removed datum {p.label}", data=data)
+
+    def _handle_remove_tolerance(self, p) -> ToolResult:
+        data = self._session.remove_tolerance(p.index)
+        return ToolResult(
+            message=f"Removed tolerance #{p.index} ({data['removed_type']})", data=data,
+        )
+
+    def _handle_modify_tolerance(self, p) -> ToolResult:
+        data = self._session.modify_tolerance(
+            p.index, value=p.value, datum_refs=p.datum_refs,
+            material_condition=p.material_condition,
+        )
+        return ToolResult(
+            message=f"Modified tolerance #{p.index}: {data['old_value']} -> {data['new_value']}mm",
+            data=data,
+        )
+
     # ------------------------------------------------------------------
     # TOPOLOGY OPTIMIZATION handlers
     # ------------------------------------------------------------------
@@ -638,6 +745,28 @@ class ToolExecutor:
             message=f"Topology optimization: {data['volume_reduction_pct']}% volume reduction",
             data=data,
         )
+
+    def _handle_list_loads(self, _p) -> ToolResult:
+        data = self._session.list_loads()
+        return ToolResult(message=f"{data['count']} loads", data=data)
+
+    def _handle_remove_load(self, p) -> ToolResult:
+        data = self._session.remove_load(p.name)
+        return ToolResult(message=f"Removed load '{p.name}'", data=data)
+
+    def _handle_modify_load(self, p) -> ToolResult:
+        data = self._session.modify_load(
+            p.name, fx=p.fx, fy=p.fy, fz=p.fz, px=p.px, py=p.py, pz=p.pz,
+        )
+        return ToolResult(message=f"Modified load '{p.name}'", data=data)
+
+    def _handle_list_boundary_conditions(self, _p) -> ToolResult:
+        data = self._session.list_boundary_conditions()
+        return ToolResult(message=f"{data['count']} boundary conditions", data=data)
+
+    def _handle_remove_boundary_condition(self, p) -> ToolResult:
+        data = self._session.remove_boundary_condition(p.name)
+        return ToolResult(message=f"Removed BC '{p.name}'", data=data)
 
     # ------------------------------------------------------------------
     # FEA handlers

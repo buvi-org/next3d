@@ -355,6 +355,188 @@ def compute_flat_pattern(
     )
 
 
+# ---------------------------------------------------------------------------
+# Material tensile strengths (MPa)
+# ---------------------------------------------------------------------------
+
+MATERIAL_TENSILE = {
+    "steel_mild": 450,  # MPa
+    "steel_stainless": 600,
+    "aluminum": 250,
+    "copper": 350,
+    "brass": 400,
+}
+
+
+# ---------------------------------------------------------------------------
+# Bending operations planner
+# ---------------------------------------------------------------------------
+
+@dataclass
+class BendOperation:
+    """A single bending operation in the manufacturing sequence."""
+
+    step: int
+    segment_index: int  # which bend segment
+    angle: float  # degrees
+    radius: float  # inside bend radius mm
+    v_die_width: float  # V-die opening mm
+    tonnage: float  # required press brake force (metric tons)
+    punch_radius: float  # punch tip radius mm
+    notes: list[str] = field(default_factory=list)  # warnings, tips
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "step": self.step,
+            "segment_index": self.segment_index,
+            "angle_degrees": self.angle,
+            "radius_mm": round(self.radius, 2),
+            "v_die_width_mm": round(self.v_die_width, 2),
+            "tonnage_metric_tons": round(self.tonnage, 2),
+            "punch_radius_mm": round(self.punch_radius, 2),
+            "notes": self.notes,
+        }
+
+
+def _select_v_die_width(thickness: float) -> float:
+    """Select V-die opening based on material thickness.
+
+    Rules:
+    - t < 3mm: V = 6 * t
+    - 3mm <= t < 8mm: V = 8 * t
+    - t >= 8mm: V = 10 * t
+    - Minimum V = 6mm
+    """
+    if thickness < 3:
+        v = 6 * thickness
+    elif thickness < 8:
+        v = 8 * thickness
+    else:
+        v = 10 * thickness
+    return max(v, 6.0)
+
+
+def _compute_tonnage(
+    bend_length: float,
+    thickness: float,
+    v_die_width: float,
+    material: str = "steel_mild",
+) -> float:
+    """Compute press brake tonnage for a V-bend.
+
+    Formula: T = (C * L * t^2 * Rm) / (V * 1000)
+    where C=1.33, L=bend length mm, t=thickness mm,
+    Rm=tensile strength MPa, V=die opening mm.
+    """
+    rm = MATERIAL_TENSILE.get(material, 450)
+    return (1.33 * bend_length * thickness ** 2 * rm) / (v_die_width * 1000)
+
+
+def plan_bending_operations(
+    segments: list[dict[str, Any]],
+    thickness: float,
+    bend_radius: float,
+    k_factor: float,
+    material: str = "steel_mild",
+) -> list[BendOperation]:
+    """Plan the bending sequence for a sheet metal part.
+
+    Rules:
+    - Bend from inside out (shortest flanges first to avoid die collision)
+    - V-die width chosen by thickness rule
+    - Tonnage from standard formula
+    - Punch radius = inside bend radius
+    - Flag collision risks where flange < V-die width
+
+    Args:
+        segments: Alternating flat/bend segment dicts.
+        thickness: Material thickness in mm.
+        bend_radius: Inside bend radius in mm.
+        k_factor: Neutral axis factor.
+        material: Material name for tensile strength lookup.
+
+    Returns:
+        List of BendOperation in recommended bending order.
+    """
+    v_die = _select_v_die_width(thickness)
+
+    # Collect bend segments with their indices and flange info
+    bend_infos: list[dict[str, Any]] = []
+    for i, seg in enumerate(segments):
+        if seg["type"] != "bend":
+            continue
+        # Compute flange lengths on each side of this bend
+        # Left flange: sum of flat lengths from start up to this bend
+        left_flange = 0.0
+        for j in range(i - 1, -1, -1):
+            if segments[j]["type"] == "flat":
+                left_flange += segments[j]["length"]
+            else:
+                break  # stop at the previous bend
+
+        # Right flange: sum of flat lengths after this bend
+        right_flange = 0.0
+        for j in range(i + 1, len(segments)):
+            if segments[j]["type"] == "flat":
+                right_flange += segments[j]["length"]
+            else:
+                break  # stop at the next bend
+
+        shorter_flange = min(left_flange, right_flange)
+
+        # Bend length = width of the adjacent flat segment
+        bend_length = 0.0
+        # Look for adjacent flat to get width
+        if i > 0 and segments[i - 1]["type"] == "flat":
+            bend_length = segments[i - 1].get("width", 0)
+        elif i + 1 < len(segments) and segments[i + 1]["type"] == "flat":
+            bend_length = segments[i + 1].get("width", 0)
+
+        if bend_length <= 0:
+            bend_length = 100.0  # fallback default
+
+        tonnage = _compute_tonnage(bend_length, thickness, v_die, material)
+
+        notes: list[str] = []
+        if shorter_flange < v_die:
+            notes.append(
+                f"Collision risk: shorter flange ({shorter_flange:.1f}mm) "
+                f"< V-die width ({v_die:.1f}mm)"
+            )
+        if abs(seg["angle"]) > 120:
+            notes.append(f"Acute bend ({seg['angle']}deg) may require special tooling")
+        if tonnage > 100:
+            notes.append(f"High tonnage ({tonnage:.1f}t) — verify press brake capacity")
+
+        bend_infos.append({
+            "segment_index": i,
+            "angle": seg["angle"],
+            "shorter_flange": shorter_flange,
+            "bend_length": bend_length,
+            "tonnage": tonnage,
+            "notes": notes,
+        })
+
+    # Sort by shortest flange first (inside-out strategy)
+    bend_infos.sort(key=lambda b: b["shorter_flange"])
+
+    # Build ordered BendOperation list
+    operations: list[BendOperation] = []
+    for step_num, info in enumerate(bend_infos, start=1):
+        operations.append(BendOperation(
+            step=step_num,
+            segment_index=info["segment_index"],
+            angle=info["angle"],
+            radius=bend_radius,
+            v_die_width=v_die,
+            tonnage=info["tonnage"],
+            punch_radius=bend_radius,
+            notes=info["notes"],
+        ))
+
+    return operations
+
+
 def estimate_sheet_metal_cost(
     flat_pattern: FlatPattern,
     material_cost_per_kg: float = 2.0,

@@ -510,6 +510,13 @@ class SheetMetalGetCost(BaseModel):
     """Estimate cost from current segments."""
     pass
 
+class SheetMetalPlanBending(BaseModel):
+    """Plan the bending sequence for the current sheet metal part.
+
+    Returns recommended bend order, V-die width, tonnage per bend,
+    and collision warnings. Uses the segments from sheet_metal_define/add_*."""
+    pass
+
 
 class CreateSheetMetal(BaseModel):
     """Create a flat sheet metal blank."""
@@ -568,6 +575,22 @@ class AutoDimension(BaseModel):
     pass
 
 
+class RemoveDimension(BaseModel):
+    """Remove a dimension annotation by its ID. Use get_dimensions to see IDs."""
+
+    dim_id: str = Field(..., description="Dimension ID to remove (e.g. 'dim_1')")
+
+
+class ModifyDimension(BaseModel):
+    """Modify an existing dimension's value, tolerances, or label."""
+
+    dim_id: str = Field(..., description="Dimension ID to modify")
+    value: float | None = Field(None, description="New value in mm or degrees (null = keep current)")
+    tolerance_plus: float | None = Field(None, description="New plus tolerance (null = keep current)")
+    tolerance_minus: float | None = Field(None, description="New minus tolerance (null = keep current)")
+    label: str | None = Field(None, description="New label (null = keep current)")
+
+
 class ExportDrawing(BaseModel):
     """Export a multi-view engineering drawing as SVG.
 
@@ -604,6 +627,16 @@ class ExportDxf(BaseModel):
     projection_dir_z: float = Field(1, description="Projection direction Z (default: top view)")
 
 
+class ListStandardParts(BaseModel):
+    """List available standard ISO metric fastener types and sizes."""
+    pass
+
+
+class ListDesignProcesses(BaseModel):
+    """List available manufacturing processes for design rule checking."""
+    pass
+
+
 class CheckDesignRules(BaseModel):
     """Check the active body against manufacturing design rules.
 
@@ -630,6 +663,23 @@ class SetParameter(BaseModel):
 class GetParameters(BaseModel):
     """Get all named design parameters."""
     pass
+
+
+class RemoveParameter(BaseModel):
+    """Remove a named design parameter."""
+
+    name: str = Field(..., description="Parameter name to remove")
+
+
+class ListMates(BaseModel):
+    """List all assembly mate constraints."""
+    pass
+
+
+class RemoveMate(BaseModel):
+    """Remove a mate constraint by its 0-based index. Use list_mates to see indices."""
+
+    index: int = Field(..., description="0-based index of the mate to remove")
 
 
 class AddMateConstraint(BaseModel):
@@ -781,6 +831,29 @@ class SuggestGDT(BaseModel):
     pass
 
 
+class RemoveDatum(BaseModel):
+    """Remove a GD&T datum reference by label."""
+
+    label: str = Field(..., description="Datum label to remove (e.g. 'A', 'B')")
+
+
+class RemoveTolerance(BaseModel):
+    """Remove a GD&T tolerance by its 0-based index. Use get_gdt to see indices."""
+
+    index: int = Field(..., description="0-based index of the tolerance to remove")
+
+
+class ModifyTolerance(BaseModel):
+    """Modify an existing GD&T tolerance value, datum refs, or material condition."""
+
+    index: int = Field(..., description="0-based index of the tolerance to modify")
+    value: float | None = Field(None, description="New tolerance value in mm (null = keep current)", gt=0)
+    datum_refs: list[str] | None = Field(None, description="New datum references (null = keep current)")
+    material_condition: str | None = Field(
+        None, description="New material condition: 'MMC', 'LMC', 'RFS', or '' (null = keep current)",
+    )
+
+
 # ---------------------------------------------------------------------------
 # TOPOLOGY OPTIMIZATION tools
 # ---------------------------------------------------------------------------
@@ -834,6 +907,40 @@ class RunTopologyOptimization(BaseModel):
         ge=3,
         le=50,
     )
+
+
+class ListLoads(BaseModel):
+    """List all loads defined for topology optimization."""
+    pass
+
+
+class RemoveLoad(BaseModel):
+    """Remove a load by name."""
+
+    name: str = Field(..., description="Load name to remove")
+
+
+class ModifyLoad(BaseModel):
+    """Modify an existing load's force or application point."""
+
+    name: str = Field(..., description="Load name to modify")
+    fx: float | None = Field(None, description="New force X (null = keep current)")
+    fy: float | None = Field(None, description="New force Y (null = keep current)")
+    fz: float | None = Field(None, description="New force Z (null = keep current)")
+    px: float | None = Field(None, description="New application point X (null = keep current)")
+    py: float | None = Field(None, description="New application point Y (null = keep current)")
+    pz: float | None = Field(None, description="New application point Z (null = keep current)")
+
+
+class ListBoundaryConditions(BaseModel):
+    """List all boundary conditions defined for topology optimization."""
+    pass
+
+
+class RemoveBoundaryCondition(BaseModel):
+    """Remove a boundary condition by name."""
+
+    name: str = Field(..., description="BC name to remove")
 
 
 # ---------------------------------------------------------------------------
@@ -918,6 +1025,7 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "sheet_metal_insert_segment": SheetMetalInsertSegment,
     "sheet_metal_get_flat_pattern": SheetMetalGetFlatPattern,
     "sheet_metal_get_cost": SheetMetalGetCost,
+    "sheet_metal_plan_bending": SheetMetalPlanBending,
     # Sheet metal (one-shot)
     "create_sheet_metal": CreateSheetMetal,
     "compute_flat_pattern": ComputeFlatPattern,
@@ -926,13 +1034,17 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "add_dimension": AddDimension,
     "get_dimensions": GetDimensions,
     "auto_dimension": AutoDimension,
+    "remove_dimension": RemoveDimension,
+    "modify_dimension": ModifyDimension,
     "export_drawing": ExportDrawing,
     "export_section_drawing": ExportSectionDrawing,
     "export_dxf": ExportDxf,
     # Design intelligence
     "check_design_rules": CheckDesignRules,
+    "list_design_processes": ListDesignProcesses,
     "set_parameter": SetParameter,
     "get_parameters": GetParameters,
+    "remove_parameter": RemoveParameter,
     "update_parameter": UpdateParameter,
     "design_table": DesignTable,
     "get_parametric_state": GetParametricState,
@@ -943,9 +1055,12 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "delete_body": DeleteBody,
     # Assembly
     "place_body": PlaceBody,
+    "list_mates": ListMates,
+    "remove_mate": RemoveMate,
     "add_mate_constraint": AddMateConstraint,
     "check_interference": CheckInterference,
     "get_bom": GetBom,
+    "list_standard_parts": ListStandardParts,
     "add_standard_part": AddStandardPart,
     "export_assembly": ExportAssembly,
     # Sketch
@@ -962,10 +1077,18 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "add_tolerance": AddTolerance,
     "get_gdt": GetGDT,
     "suggest_gdt": SuggestGDT,
+    "remove_datum": RemoveDatum,
+    "remove_tolerance": RemoveTolerance,
+    "modify_tolerance": ModifyTolerance,
     # Topology optimization
     "add_load": AddLoad,
     "add_boundary_condition": AddBoundaryCondition,
     "run_topology_optimization": RunTopologyOptimization,
+    "list_loads": ListLoads,
+    "remove_load": RemoveLoad,
+    "modify_load": ModifyLoad,
+    "list_boundary_conditions": ListBoundaryConditions,
+    "remove_boundary_condition": RemoveBoundaryCondition,
     # FEA
     "run_fea": RunFEA,
     "run_fea_parametric": RunFEAParametric,
