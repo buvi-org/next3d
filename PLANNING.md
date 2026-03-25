@@ -74,10 +74,13 @@ AI Agent Interface (JSON / Graph embeddings)
 
 ## Strategic Feature Roadmap — Phases 4–7
 
-### Current State (Phases 1–6 complete)
-60 tools, feature recognition, semantic graph, manufacturing analysis, physical properties,
-STEP/STL/3MF I/O, multi-body assembly, interference detection, BOM, standard parts,
-2D sketches, design rules, GD&T, topology optimization.
+### Current State (Phases 1–6 complete, Phase 7 partial)
+99 tools, 350 tests. Feature recognition, semantic graph, manufacturing analysis, physical
+properties, STEP/STL/3MF I/O, multi-body assembly, interference detection, BOM, standard
+parts, 2D sketches, design rules, GD&T, topology optimization, parametric engine,
+dimensions & 2D engineering drawings, sheet metal (with interactive tools + bend planner),
+FEA linear static solver, interactivity tools (list/remove/modify for loads, BCs, mates,
+tolerances, datums, dimensions, parameters, standard parts, design processes).
 
 ### Phase 4 — Advanced Modeling Operations (COMPLETE)
 Operations designers use on almost every part. Unlocks 80% of part geometry.
@@ -111,17 +114,22 @@ Where AI surpasses human designers.
 - [x] GD&T annotation (datums, tolerance zones, auto-suggest per ASME Y14.5)
 - [x] Topology optimization (load cases, boundary conditions, voxel-based density optimization)
 
-### Phase 7 — Domain Workflows & Simulation
+### Phase 7 — Domain Workflows & Simulation (PARTIAL)
 Specialized features for common design domains.
 
-- [ ] Sheet metal (bend, unfold, flat pattern, K-factor)
+- [x] Sheet metal (bend, unfold, flat pattern, K-factor) — includes interactive tools + bend operations planner
 - [ ] Weldments/structural (extrude profiles along paths — frames, trusses)
 - [ ] Enclosure generator (PCB outline + components → snap-fit enclosure)
 - [ ] Gear/cam generation (parametric involute gears, cams, sprockets)
-- [ ] FEA linear static (apply loads → check stress/deflection)
+- [x] FEA linear static (apply loads → check stress/deflection)
 - [ ] Motion simulation (verify mechanisms, collision detection)
-- [ ] Drawing generation (2D engineering drawings with dimensions, sections)
+- [x] Drawing generation (2D engineering drawings with dimensions, sections)
 - [ ] IGES export (legacy CAD interoperability)
+
+**Added beyond original plan:** Parametric engine (update_parameter, design_table,
+get_parametric_state), dimensions & measurement tools (add_dimension, get_dimensions,
+auto_dimension, export_drawing, export_section_drawing, export_dxf), 15 interactivity
+tools for list/remove/modify operations, bend operations planner.
 
 ### Recommended Build Order
 1. **Revolve, Sweep, Loft, Shell, Draft** — unlock 80% of part geometry

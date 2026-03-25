@@ -2,7 +2,11 @@
 
 A semantic 3D geometry system that lets AI agents create, modify, analyze, and export parametric 3D parts and assemblies through structured tool calls.
 
-**62 tools** covering modeling, assembly, analysis, and export — usable from Claude Code, Claude Desktop, or any MCP client.
+**99 tools** covering modeling, assembly, analysis, sheet metal, FEA, 2D drawings, and export — usable from Claude Code, Claude Desktop, or any MCP client.
+
+```bash
+pip install next3d
+```
 
 ## Quick Start with Claude Code
 
@@ -97,6 +101,29 @@ add_datum, add_tolerance, get_gdt, suggest_gdt
 Design rules for 6 processes: CNC milling, injection molding, FDM, SLA, sheet metal, casting.
 GD&T per ASME Y14.5 with auto-suggest.
 
+### Interactive Sheet Metal (10 tools)
+```
+sheet_metal_define, sheet_metal_add_flat, sheet_metal_add_bend,
+sheet_metal_list_segments, sheet_metal_modify_segment,
+sheet_metal_remove_segment, sheet_metal_insert_segment,
+sheet_metal_get_flat_pattern, sheet_metal_get_cost, sheet_metal_plan_bending
+```
+
+Define sheet metal parts interactively: add flat/bend segments, recompute flat patterns, estimate costs, and plan bending operations.
+
+### Parametric (3 tools)
+```
+update_parameter, design_table, get_parametric_state
+```
+
+### Dimensions & Drawings (6 tools)
+```
+add_dimension, get_dimensions, auto_dimension,
+export_drawing, export_section_drawing, export_dxf
+```
+
+2D engineering drawing generation with dimensions, section views, and DXF export.
+
 ### Structural Analysis (5 tools)
 ```
 run_fea, run_fea_parametric,
@@ -104,6 +131,18 @@ add_load, add_boundary_condition, run_topology_optimization
 ```
 
 Real FEA solver: plate bending + beam stiffeners, 6 materials, 11 RHS sizes, parametric studies.
+
+### Interactivity (15 tools)
+```
+remove_datum, remove_tolerance, modify_tolerance,
+list_loads, remove_load, modify_load,
+list_boundary_conditions, remove_boundary_condition,
+list_mates, remove_mate, remove_parameter,
+remove_dimension, modify_dimension,
+list_standard_parts, list_design_processes
+```
+
+List, remove, and modify operations for iterative design workflows.
 
 ### Export (7 tools)
 ```
@@ -189,6 +228,21 @@ run_fea_parametric(
 )
 ```
 
+### Sheet Metal Bracket
+
+```
+sheet_metal_define(thickness=1.5, material="steel_mild", k_factor=0.44)
+sheet_metal_add_flat(length=100, width=50)
+sheet_metal_add_bend(angle=90, radius=3)
+sheet_metal_add_flat(length=30, width=50)
+sheet_metal_get_flat_pattern()
+→ developed length, bend allowance, flat dimensions
+sheet_metal_get_cost(quantity=100)
+→ material cost, bending cost, total per-unit cost
+sheet_metal_plan_bending()
+→ ordered bend sequence, tool selection, collision checks
+```
+
 ### Revolved Shaft
 
 ```
@@ -245,6 +299,8 @@ Export (STEP, STL, 3MF, PNG, CadQuery script)
 
 ## Tech Stack
 
+99 tools across modeling, assembly, sheet metal, FEA, drawings, and export.
+
 | Layer | Technology |
 |-------|-----------|
 | CAD Kernel | OpenCascade via CadQuery |
@@ -260,7 +316,7 @@ Export (STEP, STL, 3MF, PNG, CadQuery script)
 
 ```bash
 pip install -e ".[dev]"
-pytest                     # run all tests (288)
+pytest                     # run all tests (350)
 pytest -k "FEA"           # run FEA tests only
 pytest -k "TestSketch"    # run sketch tests only
 ```
