@@ -302,6 +302,33 @@ class ToolExecutor:
     # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
+    # SHEET METAL handlers
+    # ------------------------------------------------------------------
+
+    def _handle_create_sheet_metal(self, p) -> ToolResult:
+        data = self._session.create_sheet_metal(p.width, p.length, p.thickness)
+        return ToolResult(message=f"Sheet {p.width}×{p.length}×{p.thickness}", data=data)
+
+    def _handle_compute_flat_pattern(self, p) -> ToolResult:
+        data = self._session.compute_flat_pattern(
+            p.segments, p.thickness, p.bend_radius, p.k_factor,
+        )
+        return ToolResult(
+            message=f"Flat pattern: {data['width_mm']}×{data['length_mm']}mm, {data['total_bends']} bends",
+            data=data,
+        )
+
+    def _handle_estimate_sheet_metal_cost(self, p) -> ToolResult:
+        data = self._session.estimate_sheet_metal_cost(
+            p.segments, p.thickness, p.bend_radius, p.k_factor,
+            p.material_cost_per_kg, p.density,
+        )
+        return ToolResult(
+            message=f"Sheet metal cost: ${data['total_cost']:.2f}",
+            data=data,
+        )
+
+    # ------------------------------------------------------------------
     # DIMENSION & DRAWING handlers
     # ------------------------------------------------------------------
 

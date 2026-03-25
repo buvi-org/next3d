@@ -709,6 +709,73 @@ def render_png(
 
 
 @mcp.tool()
+def create_sheet_metal(width: float, length: float, thickness: float) -> str:
+    """Create a flat sheet metal blank.
+
+    Args:
+        width: Width in mm
+        length: Length in mm
+        thickness: Material thickness in mm
+    """
+    r = _executor.call("create_sheet_metal", {
+        "width": width, "length": length, "thickness": thickness,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def compute_flat_pattern(
+    segments: list[dict],
+    thickness: float,
+    bend_radius: float = 1.0,
+    k_factor: float = 0.44,
+) -> str:
+    """Compute flat pattern (unfolded blank) from segments and bends.
+
+    Define as alternating flat/bend:
+    [{"type":"flat","length":50,"width":100}, {"type":"bend","angle":90}, ...]
+
+    Args:
+        segments: Alternating flat/bend segment definitions
+        thickness: Material thickness mm
+        bend_radius: Inside bend radius mm
+        k_factor: K-factor (steel=0.44, aluminum=0.33)
+    """
+    r = _executor.call("compute_flat_pattern", {
+        "segments": segments, "thickness": thickness,
+        "bend_radius": bend_radius, "k_factor": k_factor,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def estimate_sheet_metal_cost(
+    segments: list[dict],
+    thickness: float,
+    bend_radius: float = 1.0,
+    k_factor: float = 0.44,
+    material_cost_per_kg: float = 2.0,
+    density: float = 0.00785,
+) -> str:
+    """Estimate sheet metal manufacturing cost (material + laser cutting + bending).
+
+    Args:
+        segments: Same as compute_flat_pattern
+        thickness: Material thickness mm
+        bend_radius: Inside bend radius mm
+        k_factor: K-factor
+        material_cost_per_kg: Material cost per kg
+        density: g/mm3 (steel=0.00785)
+    """
+    r = _executor.call("estimate_sheet_metal_cost", {
+        "segments": segments, "thickness": thickness,
+        "bend_radius": bend_radius, "k_factor": k_factor,
+        "material_cost_per_kg": material_cost_per_kg, "density": density,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
 def add_dimension(
     dim_type: str,
     value: float,

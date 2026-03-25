@@ -463,6 +463,40 @@ class GetParametricState(BaseModel):
     pass
 
 
+class CreateSheetMetal(BaseModel):
+    """Create a flat sheet metal blank."""
+
+    width: float = Field(..., description="Width (X) in mm", gt=0)
+    length: float = Field(..., description="Length (Y) in mm", gt=0)
+    thickness: float = Field(..., description="Material thickness in mm", gt=0)
+
+
+class ComputeFlatPattern(BaseModel):
+    """Compute the flat pattern (unfolded blank) from segments and bends.
+
+    Define a sheet metal part as alternating flat segments and bends.
+    Returns the flat blank geometry with bend line positions — ready for laser cutting."""
+
+    segments: list[dict] = Field(
+        ...,
+        description='Alternating flat/bend segments: [{"type":"flat","length":50,"width":100}, {"type":"bend","angle":90}, {"type":"flat","length":30,"width":100}]',
+    )
+    thickness: float = Field(..., description="Material thickness in mm", gt=0)
+    bend_radius: float = Field(1.0, description="Inside bend radius in mm", gt=0)
+    k_factor: float = Field(0.44, description="K-factor (0.3-0.5). Steel=0.44, Aluminum=0.33")
+
+
+class EstimateSheetMetalCost(BaseModel):
+    """Estimate manufacturing cost for a sheet metal part (material + cutting + bending)."""
+
+    segments: list[dict] = Field(..., description="Same as compute_flat_pattern segments")
+    thickness: float = Field(..., description="Material thickness in mm", gt=0)
+    bend_radius: float = Field(1.0, description="Inside bend radius", gt=0)
+    k_factor: float = Field(0.44, description="K-factor")
+    material_cost_per_kg: float = Field(2.0, description="Material cost per kg")
+    density: float = Field(0.00785, description="Material density g/mm³ (steel=0.00785)")
+
+
 class AddDimension(BaseModel):
     """Add a dimension annotation to the active body."""
 
@@ -826,6 +860,10 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "find_faces": FindFaces,
     "measure_distance": MeasureDistance,
     # Design intelligence
+    # Sheet metal
+    "create_sheet_metal": CreateSheetMetal,
+    "compute_flat_pattern": ComputeFlatPattern,
+    "estimate_sheet_metal_cost": EstimateSheetMetalCost,
     # Dimensions & Drawings
     "add_dimension": AddDimension,
     "get_dimensions": GetDimensions,

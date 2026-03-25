@@ -476,6 +476,93 @@ class TestParametricDimensions:
         assert "operations" in r.data
 
 
+class TestSheetMetal:
+    def test_bend_parameters(self):
+        from next3d.core.sheet_metal import BendParameters
+        bp = BendParameters(angle_degrees=90, radius=1.0, thickness=1.5, k_factor=0.44)
+        assert bp.bend_allowance > 0
+        assert bp.bend_deduction > 0
+        d = bp.to_dict()
+        assert d["angle_degrees"] == 90
+
+    def test_create_sheet(self):
+        s = ModelingSession()
+        data = s.create_sheet_metal(100, 60, 1.5)
+        assert data["faces"] == 6  # box = 6 faces
+        assert data["solids"] == 1
+
+    def test_flat_pattern_simple(self):
+        """L-bracket: flat → 90° bend → flat."""
+        s = ModelingSession()
+        segments = [
+            {"type": "flat", "length": 50, "width": 100},
+            {"type": "bend", "angle": 90},
+            {"type": "flat", "length": 30, "width": 100},
+        ]
+        result = s.compute_flat_pattern(segments, thickness=1.5)
+        assert result["total_bends"] == 1
+        assert result["width_mm"] == 100
+        assert result["length_mm"] > 80  # 50 + bend_allowance + 30
+
+    def test_flat_pattern_u_channel(self):
+        """U-channel: flat → bend → flat → bend → flat."""
+        s = ModelingSession()
+        segments = [
+            {"type": "flat", "length": 20, "width": 80},
+            {"type": "bend", "angle": 90},
+            {"type": "flat", "length": 40, "width": 80},
+            {"type": "bend", "angle": 90},
+            {"type": "flat", "length": 20, "width": 80},
+        ]
+        result = s.compute_flat_pattern(segments, thickness=2.0, bend_radius=2.0)
+        assert result["total_bends"] == 2
+        assert len(result["bend_lines"]) == 2
+
+    def test_cost_estimate(self):
+        s = ModelingSession()
+        segments = [
+            {"type": "flat", "length": 50, "width": 100},
+            {"type": "bend", "angle": 90},
+            {"type": "flat", "length": 30, "width": 100},
+        ]
+        cost = s.estimate_sheet_metal_cost(segments, thickness=1.5)
+        assert cost["total_cost"] > 0
+        assert cost["material_cost"] > 0
+        assert cost["cutting_cost"] > 0
+        assert cost["bending_cost"] > 0
+
+    def test_k_factors(self):
+        from next3d.core.sheet_metal import get_k_factor
+        assert get_k_factor("steel_mild") == 0.44
+        assert get_k_factor("aluminum") == 0.33
+
+    def test_flat_pattern_via_executor(self):
+        ex = ToolExecutor()
+        r = ex.call("compute_flat_pattern", {
+            "segments": [
+                {"type": "flat", "length": 50, "width": 100},
+                {"type": "bend", "angle": 90},
+                {"type": "flat", "length": 30, "width": 100},
+            ],
+            "thickness": 1.5,
+        })
+        assert r.success
+        assert r.data["total_bends"] == 1
+
+    def test_cost_via_executor(self):
+        ex = ToolExecutor()
+        r = ex.call("estimate_sheet_metal_cost", {
+            "segments": [
+                {"type": "flat", "length": 50, "width": 100},
+                {"type": "bend", "angle": 90},
+                {"type": "flat", "length": 30, "width": 100},
+            ],
+            "thickness": 1.5,
+        })
+        assert r.success
+        assert r.data["total_cost"] > 0
+
+
 class TestDimensions:
     def test_add_dimension(self):
         s = ModelingSession()

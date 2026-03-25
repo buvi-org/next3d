@@ -1038,6 +1038,66 @@ class ModelingSession:
         }
 
     # ------------------------------------------------------------------
+    # SHEET METAL
+    # ------------------------------------------------------------------
+
+    def create_sheet_metal(
+        self,
+        width: float,
+        length: float,
+        thickness: float,
+    ) -> dict[str, Any]:
+        """Create a flat sheet metal blank."""
+        from next3d.core.sheet_metal import create_sheet
+        shape = create_sheet(width, length, thickness)
+        op = Operation(
+            op_type=OpType.CREATE_BOX,  # reuse box op type
+            params={"length": width, "width": length, "height": thickness},
+            description=f"Sheet {width}×{length}×{thickness}",
+        )
+        return self._apply(shape, op)
+
+    def compute_flat_pattern(
+        self,
+        segments: list[dict[str, Any]],
+        thickness: float,
+        bend_radius: float = 1.0,
+        k_factor: float = 0.44,
+    ) -> dict[str, Any]:
+        """Compute the flat pattern from segments and bends.
+
+        segments: [{"type":"flat","length":50,"width":100}, {"type":"bend","angle":90}, ...]
+        """
+        from next3d.core.sheet_metal import compute_flat_pattern
+        fp = compute_flat_pattern(segments, thickness, bend_radius, k_factor)
+
+        # Replace active body with the flat blank
+        op = Operation(
+            op_type=OpType.CREATE_BOX,
+            params={"segments": segments, "thickness": thickness},
+            description=f"Flat pattern: {fp.width}×{fp.length}, {fp.total_bends} bends",
+        )
+        result = self._apply(fp.shape, op)
+        result.update(fp.to_dict())
+        return result
+
+    def estimate_sheet_metal_cost(
+        self,
+        segments: list[dict[str, Any]],
+        thickness: float,
+        bend_radius: float = 1.0,
+        k_factor: float = 0.44,
+        material_cost_per_kg: float = 2.0,
+        density: float = 0.00785,
+    ) -> dict[str, Any]:
+        """Estimate manufacturing cost for a sheet metal part."""
+        from next3d.core.sheet_metal import compute_flat_pattern, estimate_sheet_metal_cost
+        fp = compute_flat_pattern(segments, thickness, bend_radius, k_factor)
+        cost = estimate_sheet_metal_cost(fp, material_cost_per_kg, density)
+        cost.update(fp.to_dict())
+        return cost
+
+    # ------------------------------------------------------------------
     # DIMENSIONS
     # ------------------------------------------------------------------
 
