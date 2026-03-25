@@ -162,23 +162,33 @@ class Drawing:
                 f'fill="#666">{view.config.label or view.config.name}</text>'
             )
 
-            # Embed the view SVG (scaled and translated)
-            # Extract the inner content from the view SVG
-            inner = _extract_svg_content(view.svg_content)
+            # Embed the view SVG (scaled and translated to fit the view rect)
+            inner, vb_x, vb_y, vb_w, vb_h = _extract_svg_content(view.svg_content)
             if inner:
-                # Scale to fit within view area with padding
+                # Available space inside the view rect (with padding)
                 pad = 15
                 avail_w = view_w - 2 * pad
                 avail_h = view_h - 2 * pad - 15  # extra space for label
-                sx = avail_w / max(view.width, 1) if view.width > 0 else 1
-                sy = avail_h / max(view.height, 1) if view.height > 0 else 1
-                s = min(sx, sy, 2.0)  # don't upscale more than 2x
 
-                cx = x + view_w / 2
-                cy = y + (view_h - 15) / 2
+                # Scale to fit the SVG viewBox into the available space
+                sx = avail_w / max(vb_w, 0.1)
+                sy = avail_h / max(vb_h, 0.1)
+                s = min(sx, sy)
+
+                # Center of the view rect (accounting for label)
+                cx = x + pad + avail_w / 2
+                cy = y + pad + avail_h / 2
+
+                # Center of the SVG content in its own coordinate space
+                svg_cx = vb_x + vb_w / 2
+                svg_cy = vb_y + vb_h / 2
+
+                # Translate so SVG center maps to view rect center
+                tx = cx - svg_cx * s
+                ty = cy - svg_cy * s
 
                 parts.append(
-                    f'<g transform="translate({cx},{cy}) scale({s})">'
+                    f'<g transform="translate({tx:.2f},{ty:.2f}) scale({s:.4f})">'
                 )
                 parts.append(inner)
                 parts.append('</g>')
@@ -187,14 +197,41 @@ class Drawing:
         return '\n'.join(parts)
 
 
-def _extract_svg_content(svg: str) -> str:
-    """Extract the inner content from an SVG string (strip outer <svg> tags)."""
+def _extract_svg_content(svg: str) -> tuple[str, float, float, float, float]:
+    """Extract inner content and viewBox from an SVG string.
+
+    Returns:
+        (inner_svg, vb_x, vb_y, vb_width, vb_height)
+        If no viewBox is found, dimensions default to (0, 0, 100, 100).
+    """
     import re
-    # Remove <?xml and <svg> wrappers
-    svg = re.sub(r'<\?xml[^>]*\?>', '', svg)
-    svg = re.sub(r'<svg[^>]*>', '', svg, count=1)
-    svg = re.sub(r'</svg>\s*$', '', svg)
-    return svg.strip()
+
+    # Parse viewBox or width/height from the <svg> tag
+    vb_x, vb_y, vb_w, vb_h = 0.0, 0.0, 100.0, 100.0
+
+    svg_tag = re.search(r'<svg[^>]*>', svg)
+    if svg_tag:
+        tag = svg_tag.group(0)
+        vb_match = re.search(r'viewBox\s*=\s*"([^"]*)"', tag)
+        if vb_match:
+            parts = vb_match.group(1).split()
+            if len(parts) == 4:
+                vb_x, vb_y, vb_w, vb_h = (float(p) for p in parts)
+        else:
+            # Try width/height attributes
+            w_match = re.search(r'\bwidth\s*=\s*"([0-9.]+)', tag)
+            h_match = re.search(r'\bheight\s*=\s*"([0-9.]+)', tag)
+            if w_match:
+                vb_w = float(w_match.group(1))
+            if h_match:
+                vb_h = float(h_match.group(1))
+
+    # Strip outer wrappers
+    inner = re.sub(r'<\?xml[^>]*\?>', '', svg)
+    inner = re.sub(r'<svg[^>]*>', '', inner, count=1)
+    inner = re.sub(r'</svg>\s*$', '', inner)
+
+    return inner.strip(), vb_x, vb_y, vb_w, vb_h
 
 
 # ---------------------------------------------------------------------------
@@ -236,20 +273,14 @@ def render_view(
             # Last resort: use toSvg on workplane
             svg = wp.toSvg()
 
-    # Estimate view dimensions from bounding box
-    from OCP.Bnd import Bnd_Box
-    from OCP.BRepBndLib import BRepBndLib
-    bbox = Bnd_Box()
-    BRepBndLib.Add_s(render_shape, bbox)
-    xmin, ymin, zmin, xmax, ymax, zmax = bbox.Get()
-    w = max(xmax - xmin, ymax - ymin, 1)
-    h = max(zmax - zmin, ymax - ymin, 1)
+    # Get actual 2D dimensions from the SVG viewBox
+    _, vb_x, vb_y, vb_w, vb_h = _extract_svg_content(svg)
 
     return DrawingView(
         config=config,
         svg_content=svg,
-        width=w,
-        height=h,
+        width=vb_w,
+        height=vb_h,
     )
 
 

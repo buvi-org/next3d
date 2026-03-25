@@ -5,7 +5,7 @@
 <text x="600.0" y="788" text-anchor="middle" font-family="sans-serif" font-size="10">Scale: 1:1</text>
 <rect x="40.0" y="40.0" width="346.6666666666667" height="310.0" fill="none" stroke="#ccc" stroke-width="0.5" stroke-dasharray="4,2"/>
 <text x="213.33333333333334" y="345.0" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#666">Front</text>
-<g transform="translate(213.33333333333334,187.5) scale(2.0)">
+<g transform="translate(55.00,140.00) scale(0.3958)">
 <g transform="scale(4.707386480120419, -4.707386480120419)   translate(66.3603377006686,-23.193076444721445)" stroke-width="0.21243210095943071"  fill="none">
        <!-- hidden lines -->
        <g  stroke="rgb(160,160,160)" fill="none" stroke-dasharray="0.21243210095943071,0.21243210095943071" >
@@ -197,7 +197,7 @@
 </g>
 <rect x="426.6666666666667" y="40.0" width="346.6666666666667" height="310.0" fill="none" stroke="#ccc" stroke-width="0.5" stroke-dasharray="4,2"/>
 <text x="600.0" y="345.0" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#666">Top</text>
-<g transform="translate(600.0,187.5) scale(2.0)">
+<g transform="translate(441.67,140.00) scale(0.3958)">
 <g transform="scale(4.707386480120419, -4.707386480120419)   translate(66.3603377006686,-23.193076444721445)" stroke-width="0.21243210095943071"  fill="none">
        <!-- hidden lines -->
        <g  stroke="rgb(160,160,160)" fill="none" stroke-dasharray="0.21243210095943071,0.21243210095943071" >
@@ -389,7 +389,7 @@
 </g>
 <rect x="813.3333333333334" y="40.0" width="346.6666666666667" height="310.0" fill="none" stroke="#ccc" stroke-width="0.5" stroke-dasharray="4,2"/>
 <text x="986.6666666666667" y="345.0" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#666">Right</text>
-<g transform="translate(986.6666666666667,187.5) scale(2.0)">
+<g transform="translate(828.33,140.00) scale(0.3958)">
 <g transform="scale(4.707386480120419, -4.707386480120419)   translate(66.3603377006686,-23.193076444721445)" stroke-width="0.21243210095943071"  fill="none">
        <!-- hidden lines -->
        <g  stroke="rgb(160,160,160)" fill="none" stroke-dasharray="0.21243210095943071,0.21243210095943071" >
@@ -581,7 +581,7 @@
 </g>
 <rect x="40.0" y="390.0" width="346.6666666666667" height="310.0" fill="none" stroke="#ccc" stroke-width="0.5" stroke-dasharray="4,2"/>
 <text x="213.33333333333334" y="695.0" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#666">Isometric</text>
-<g transform="translate(213.33333333333334,537.5) scale(2.0)">
+<g transform="translate(55.00,490.00) scale(0.3958)">
 <g transform="scale(4.707386480120419, -4.707386480120419)   translate(66.3603377006686,-23.193076444721445)" stroke-width="0.21243210095943071"  fill="none">
        <!-- hidden lines -->
        <g  stroke="rgb(160,160,160)" fill="none" stroke-dasharray="0.21243210095943071,0.21243210095943071" >
