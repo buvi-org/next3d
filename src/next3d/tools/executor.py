@@ -301,6 +301,104 @@ class ToolExecutor:
     # SESSION handlers
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # MULTI-BODY handlers
+    # ------------------------------------------------------------------
+
+    def _handle_create_named_body(self, p) -> ToolResult:
+        params = {}
+        if p.length is not None:
+            params["length"] = p.length
+        if p.width is not None:
+            params["width"] = p.width
+        if p.height is not None:
+            params["height"] = p.height
+        if p.radius is not None:
+            params["radius"] = p.radius
+        data = self._session.create_body(p.name, p.shape_type, p.material, **params)
+        return ToolResult(message=f"Created body '{p.name}' ({p.shape_type})", data=data)
+
+    def _handle_set_active_body(self, p) -> ToolResult:
+        data = self._session.set_active_body(p.name)
+        return ToolResult(message=f"Active body: {p.name}", data=data)
+
+    def _handle_list_bodies(self, _p) -> ToolResult:
+        data = self._session.list_bodies()
+        return ToolResult(message=f"{data['count']} bodies", data=data)
+
+    def _handle_delete_body(self, p) -> ToolResult:
+        data = self._session.delete_body(p.name)
+        return ToolResult(message=f"Deleted body '{p.name}'", data=data)
+
+    def _handle_place_body(self, p) -> ToolResult:
+        data = self._session.place_body(
+            p.name, p.x, p.y, p.z, p.axis_x, p.axis_y, p.axis_z, p.angle_degrees,
+        )
+        return ToolResult(message=f"Placed '{p.name}' at ({p.x},{p.y},{p.z})", data=data)
+
+    def _handle_check_interference(self, p) -> ToolResult:
+        data = self._session.check_interference(p.body_a, p.body_b)
+        status = "INTERFERES" if data["interferes"] else "clear"
+        return ToolResult(message=f"{p.body_a} ↔ {p.body_b}: {status}", data=data)
+
+    def _handle_get_bom(self, _p) -> ToolResult:
+        data = self._session.get_bom()
+        return ToolResult(message=f"BOM: {data['item_count']} items, {data['total_mass_grams']}g", data=data)
+
+    def _handle_add_standard_part(self, p) -> ToolResult:
+        from next3d.parts.fasteners import (
+            iso_hex_bolt, iso_hex_nut, iso_flat_washer, iso_socket_head_cap_screw,
+        )
+
+        generators = {
+            "hex_bolt": lambda: iso_hex_bolt(p.size, p.length or 20),
+            "hex_nut": lambda: iso_hex_nut(p.size),
+            "flat_washer": lambda: iso_flat_washer(p.size),
+            "socket_head_cap_screw": lambda: iso_socket_head_cap_screw(p.size, p.length or 20),
+        }
+        gen = generators.get(p.part_type)
+        if gen is None:
+            return ToolResult(success=False, message=f"Unknown part type: {p.part_type}")
+
+        shape = gen()
+        # Add as a named body
+        session = self._session
+        if p.name in session._bodies:
+            return ToolResult(success=False, message=f"Body '{p.name}' already exists.")
+
+        session._bodies[p.name] = shape
+        session._body_materials[p.name] = "steel"
+        session._graphs[p.name] = None
+        old_active = session._active_body
+        session._active_body = p.name
+        g = session.graph
+        session._active_body = old_active
+
+        return ToolResult(
+            message=f"Added {p.part_type} {p.size} as '{p.name}'",
+            data={"name": p.name, "part_type": p.part_type, "size": p.size,
+                  "faces": len(g.faces), "total_bodies": len(session._bodies)},
+        )
+
+    def _handle_export_assembly(self, p) -> ToolResult:
+        self._session.export_assembly(p.output_path)
+        return ToolResult(message=f"Exported assembly to {p.output_path}")
+
+    def _handle_add_mate_constraint(self, p) -> ToolResult:
+        params = {}
+        if p.distance is not None:
+            params["distance"] = p.distance
+        if p.angle is not None:
+            params["angle"] = p.angle
+        data = self._session.add_mate(
+            p.mate_type, p.body_a, p.entity_a, p.body_b, p.entity_b, **params,
+        )
+        return ToolResult(message=f"Added {p.mate_type} mate: {p.body_a} ↔ {p.body_b}", data=data)
+
+    # ------------------------------------------------------------------
+    # SESSION handlers
+    # ------------------------------------------------------------------
+
     def _handle_undo(self, _p) -> ToolResult:
         data = self._session.undo()
         return ToolResult(message=f"Undone: {data.get('undone', '')}", data=data)

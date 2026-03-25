@@ -59,10 +59,21 @@ class OpType(str, Enum):
     ADD_SHELL = "add_shell"
     ADD_DRAFT = "add_draft"
 
+    # Multi-body
+    CREATE_NAMED_BODY = "create_named_body"
+    SET_ACTIVE_BODY = "set_active_body"
+    DELETE_BODY = "delete_body"
+    BOOLEAN_BODIES = "boolean_bodies"
+
+    # Assembly
+    PLACE_BODY = "place_body"
+    ADD_MATE = "add_mate"
+
     # File
     LOAD_STEP = "load_step"
     EXPORT_STL = "export_stl"
     EXPORT_3MF = "export_3mf"
+    EXPORT_ASSEMBLY = "export_assembly"
     RENDER_PNG = "render_png"
 
 

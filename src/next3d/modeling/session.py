@@ -1,20 +1,24 @@
 """Modeling session — stateful bridge between AI tool calls and geometry.
 
 A session holds:
-1. The current shape (TopoDS_Shape)
+1. Named bodies (multi-body support) — each body is a TopoDS_Shape
 2. The operation log (what the AI did)
-3. The semantic graph (what the shape means)
+3. Semantic graphs per body
+4. Assembly placements and mate constraints
 
 After every mutation, the semantic graph is rebuilt so the AI
 always has an up-to-date understanding of the geometry.
+
+Backward compatible: single-body workflows use an implicit "default" body.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from OCP.TopoDS import TopoDS_Shape
+from OCP.TopoDS import TopoDS_Shape, TopoDS_Compound, TopoDS_Builder
 
 from next3d.core.brep import load_step, save_step
 from next3d.core.schema import SemanticGraph
@@ -27,40 +31,115 @@ class ModelingError(Exception):
     """Raised when a modeling operation fails."""
 
 
+DEFAULT_BODY = "default"
+
+
+@dataclass
+class Placement:
+    """Position and orientation of a body in assembly space."""
+
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    axis_x: float = 0.0
+    axis_y: float = 0.0
+    axis_z: float = 1.0
+    angle_degrees: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "translation": {"x": self.x, "y": self.y, "z": self.z},
+            "rotation": {
+                "axis": [self.axis_x, self.axis_y, self.axis_z],
+                "angle_degrees": self.angle_degrees,
+            },
+        }
+
+
+@dataclass
+class MateConstraint:
+    """A declarative constraint between two bodies."""
+
+    mate_type: str  # coincident, concentric, flush, distance, angle
+    body_a: str
+    entity_a: str  # persistent_id
+    body_b: str
+    entity_b: str
+    parameters: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mate_type": self.mate_type,
+            "body_a": self.body_a,
+            "entity_a": self.entity_a,
+            "body_b": self.body_b,
+            "entity_b": self.entity_b,
+            "parameters": self.parameters,
+        }
+
+
 class ModelingSession:
     """Stateful modeling session for AI-driven 3D creation and modification.
 
-    Usage:
+    Supports multiple named bodies, assembly placement, and interference checking.
+
+    Single-body usage (backward compatible):
         session = ModelingSession()
-        session.create_box(100, 60, 20)
-        session.add_hole(0, 0, 10)
-        graph = session.graph          # semantic understanding
+        session.create_box(100, 60, 20)       # creates "default" body
+        session.add_hole(0, 0, 10)             # modifies active body
         session.export_step("part.step")
-        script = session.to_script()   # CadQuery Python code
+
+    Multi-body usage:
+        session = ModelingSession()
+        session.create_body("bracket", "box", length=100, width=60, height=20)
+        session.create_body("shaft", "cylinder", radius=5, height=80)
+        session.set_active_body("bracket")
+        session.add_hole(0, 0, 12)             # drills into bracket
+        session.place_body("shaft", x=0, y=0, z=20)
     """
 
     def __init__(self) -> None:
-        self._shape: TopoDS_Shape | None = None
-        self._graph: SemanticGraph | None = None
+        # Multi-body registry
+        self._bodies: dict[str, TopoDS_Shape] = {}
+        self._active_body: str = DEFAULT_BODY
+        self._body_materials: dict[str, str] = {}  # body name → material key
+        self._body_metadata: dict[str, dict[str, Any]] = {}
+
+        # Per-body state
+        self._graphs: dict[str, SemanticGraph | None] = {}
+        self._histories: dict[str, list[TopoDS_Shape]] = {}
+
+        # Assembly state
+        self._placements: dict[str, Placement] = {}
+        self._mates: list[MateConstraint] = []
+
+        # Global operation log
         self._log = OperationLog()
-        self._history: list[TopoDS_Shape] = []  # for undo
 
     # ------------------------------------------------------------------
-    # Properties
+    # Properties (backward compatible)
     # ------------------------------------------------------------------
 
     @property
     def shape(self) -> TopoDS_Shape | None:
-        return self._shape
+        """Current active body's shape. Backward compatible."""
+        return self._bodies.get(self._active_body)
+
+    @property
+    def _shape(self) -> TopoDS_Shape | None:
+        """Alias for backward compatibility with internal code."""
+        return self.shape
 
     @property
     def graph(self) -> SemanticGraph:
-        """Current semantic graph. Rebuilt lazily after mutations."""
-        if self._graph is None and self._shape is not None:
-            self._graph = build_semantic_graph_from_shape(self._shape)
-        if self._graph is None:
+        """Semantic graph of the active body. Rebuilt lazily."""
+        name = self._active_body
+        shape = self._bodies.get(name)
+        if shape is None:
             return SemanticGraph()
-        return self._graph
+        if self._graphs.get(name) is None:
+            self._graphs[name] = build_semantic_graph_from_shape(shape)
+        return self._graphs[name]
 
     @property
     def history(self) -> OperationLog:
@@ -68,27 +147,418 @@ class ModelingSession:
 
     @property
     def is_empty(self) -> bool:
-        return self._shape is None
+        return len(self._bodies) == 0
+
+    @property
+    def active_body_name(self) -> str:
+        return self._active_body
+
+    @property
+    def body_names(self) -> list[str]:
+        return list(self._bodies.keys())
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
     def _apply(self, new_shape: TopoDS_Shape, op: Operation) -> dict[str, Any]:
-        """Apply a shape mutation: save undo state, update shape, log op, invalidate graph."""
-        if self._shape is not None:
-            self._history.append(self._shape)
-        self._shape = new_shape
-        self._graph = None  # invalidate — will rebuild on next .graph access
+        """Apply a shape mutation to the active body."""
+        name = self._active_body
+
+        # Save undo state
+        old_shape = self._bodies.get(name)
+        if old_shape is not None:
+            self._histories.setdefault(name, []).append(old_shape)
+
+        self._bodies[name] = new_shape
+        self._graphs[name] = None  # invalidate
         self._log.append(op)
-        # Return a summary of what happened
+
         g = self.graph
-        return {
+        result = {
             "op_id": op.op_id,
+            "body": name,
             "faces": len(g.faces),
             "edges": len(g.edges),
             "features": len(g.features),
             "solids": len(g.solids),
+        }
+        if len(self._bodies) > 1:
+            result["total_bodies"] = len(self._bodies)
+        return result
+
+    def _require_shape(self) -> TopoDS_Shape:
+        shape = self._bodies.get(self._active_body)
+        if shape is None:
+            raise ModelingError("No geometry loaded. Create or load a shape first.")
+        return shape
+
+    # ------------------------------------------------------------------
+    # MULTI-BODY operations
+    # ------------------------------------------------------------------
+
+    def create_body(
+        self,
+        name: str,
+        shape_type: str,
+        material: str = "steel",
+        **params: Any,
+    ) -> dict[str, Any]:
+        """Create a named body and make it active.
+
+        Args:
+            name: Body name (must be unique).
+            shape_type: "box", "cylinder", "sphere", "extrusion".
+            material: Material key (steel, aluminum, abs, etc.).
+            **params: Shape parameters (length, width, height, radius, etc.).
+        """
+        if name in self._bodies:
+            raise ModelingError(f"Body '{name}' already exists. Delete it first or use a different name.")
+
+        creators = {
+            "box": kernel.create_box,
+            "cylinder": kernel.create_cylinder,
+            "sphere": kernel.create_sphere,
+            "extrusion": kernel.create_extrusion,
+        }
+        creator = creators.get(shape_type)
+        if creator is None:
+            raise ModelingError(f"Unknown shape type: {shape_type}. Use: {', '.join(creators)}")
+
+        shape = creator(**params)
+        old_active = self._active_body
+        self._active_body = name
+        self._body_materials[name] = material
+
+        op = Operation(
+            op_type=OpType.CREATE_NAMED_BODY,
+            params={"name": name, "shape_type": shape_type, "material": material, **params},
+            description=f"Body '{name}' ({shape_type})",
+        )
+        return self._apply(shape, op)
+
+    def set_active_body(self, name: str) -> dict[str, Any]:
+        """Switch which body subsequent operations target."""
+        if name not in self._bodies:
+            raise ModelingError(f"Body '{name}' not found. Available: {', '.join(self._bodies)}")
+        self._active_body = name
+        g = self.graph
+        return {
+            "active_body": name,
+            "faces": len(g.faces),
+            "features": len(g.features),
+            "solids": len(g.solids),
+        }
+
+    def list_bodies(self) -> dict[str, Any]:
+        """List all bodies with summary info."""
+        from next3d.core.properties import MATERIALS, compute_physical_properties
+
+        bodies = []
+        for name, shape in self._bodies.items():
+            g = self._graphs.get(name)
+            if g is None:
+                g = build_semantic_graph_from_shape(shape)
+                self._graphs[name] = g
+
+            mat_key = self._body_materials.get(name, "steel")
+            density = MATERIALS.get(mat_key, 0.00785)
+
+            try:
+                props = compute_physical_properties(shape, density)
+                volume = props.volume
+                mass = props.mass
+            except Exception:
+                volume = 0
+                mass = 0
+
+            bodies.append({
+                "name": name,
+                "active": name == self._active_body,
+                "material": mat_key,
+                "faces": len(g.faces),
+                "features": len(g.features),
+                "volume_mm3": round(volume, 2),
+                "mass_grams": round(mass, 2),
+                "placement": self._placements.get(name, Placement()).to_dict(),
+            })
+
+        return {
+            "count": len(bodies),
+            "bodies": bodies,
+            "active_body": self._active_body,
+        }
+
+    def delete_body(self, name: str) -> dict[str, Any]:
+        """Delete a named body."""
+        if name not in self._bodies:
+            raise ModelingError(f"Body '{name}' not found.")
+        del self._bodies[name]
+        self._graphs.pop(name, None)
+        self._histories.pop(name, None)
+        self._body_materials.pop(name, None)
+        self._placements.pop(name, None)
+        # Remove mates referencing this body
+        self._mates = [m for m in self._mates if m.body_a != name and m.body_b != name]
+
+        # Switch active to another body if current was deleted
+        if self._active_body == name:
+            self._active_body = next(iter(self._bodies), DEFAULT_BODY)
+
+        op = Operation(
+            op_type=OpType.DELETE_BODY,
+            params={"name": name},
+            description=f"Deleted body '{name}'",
+        )
+        self._log.append(op)
+        return {"deleted": name, "remaining_bodies": list(self._bodies.keys())}
+
+    def duplicate_body(self, source: str, new_name: str) -> dict[str, Any]:
+        """Duplicate an existing body under a new name."""
+        if source not in self._bodies:
+            raise ModelingError(f"Body '{source}' not found.")
+        if new_name in self._bodies:
+            raise ModelingError(f"Body '{new_name}' already exists.")
+
+        import cadquery as cq
+        # OCC shapes can't be deepcopied; use CadQuery's copy
+        self._bodies[new_name] = cq.Shape(self._bodies[source]).copy().wrapped
+        self._body_materials[new_name] = self._body_materials.get(source, "steel")
+        self._graphs[new_name] = None
+
+        old_active = self._active_body
+        self._active_body = new_name
+        g = self.graph
+        self._active_body = old_active
+
+        return {
+            "source": source,
+            "new_name": new_name,
+            "faces": len(g.faces),
+            "total_bodies": len(self._bodies),
+        }
+
+    def boolean_bodies(
+        self,
+        operation: str,
+        body_a: str,
+        body_b: str,
+        result_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Boolean operation between two named bodies."""
+        if body_a not in self._bodies:
+            raise ModelingError(f"Body '{body_a}' not found.")
+        if body_b not in self._bodies:
+            raise ModelingError(f"Body '{body_b}' not found.")
+
+        ops = {"union": kernel.boolean_union, "cut": kernel.boolean_cut, "intersect": kernel.boolean_intersect}
+        op_fn = ops.get(operation)
+        if op_fn is None:
+            raise ModelingError(f"Unknown operation: {operation}. Use: union, cut, intersect")
+
+        result_shape = op_fn(self._bodies[body_a], self._bodies[body_b])
+        target = result_name or body_a
+        self._bodies[target] = result_shape
+        self._graphs[target] = None
+
+        op = Operation(
+            op_type=OpType.BOOLEAN_BODIES,
+            params={"operation": operation, "body_a": body_a, "body_b": body_b, "result_name": target},
+            description=f"Boolean {operation}: {body_a} + {body_b} → {target}",
+        )
+        self._log.append(op)
+
+        self._active_body = target
+        g = self.graph
+        return {
+            "result_body": target,
+            "faces": len(g.faces),
+            "features": len(g.features),
+            "total_bodies": len(self._bodies),
+        }
+
+    # ------------------------------------------------------------------
+    # ASSEMBLY operations
+    # ------------------------------------------------------------------
+
+    def place_body(
+        self,
+        name: str,
+        x: float = 0,
+        y: float = 0,
+        z: float = 0,
+        axis_x: float = 0,
+        axis_y: float = 0,
+        axis_z: float = 1,
+        angle_degrees: float = 0,
+    ) -> dict[str, Any]:
+        """Position a body in assembly space."""
+        if name not in self._bodies:
+            raise ModelingError(f"Body '{name}' not found.")
+
+        self._placements[name] = Placement(
+            x=x, y=y, z=z,
+            axis_x=axis_x, axis_y=axis_y, axis_z=axis_z,
+            angle_degrees=angle_degrees,
+        )
+
+        op = Operation(
+            op_type=OpType.PLACE_BODY,
+            params={"name": name, "x": x, "y": y, "z": z,
+                     "axis_x": axis_x, "axis_y": axis_y, "axis_z": axis_z,
+                     "angle_degrees": angle_degrees},
+            description=f"Placed '{name}' at ({x},{y},{z})",
+        )
+        self._log.append(op)
+        return {"body": name, "placement": self._placements[name].to_dict()}
+
+    def add_mate(
+        self,
+        mate_type: str,
+        body_a: str,
+        entity_a: str,
+        body_b: str,
+        entity_b: str,
+        **parameters: Any,
+    ) -> dict[str, Any]:
+        """Add a mate constraint between two bodies."""
+        for name in [body_a, body_b]:
+            if name not in self._bodies:
+                raise ModelingError(f"Body '{name}' not found.")
+
+        mate = MateConstraint(
+            mate_type=mate_type,
+            body_a=body_a, entity_a=entity_a,
+            body_b=body_b, entity_b=entity_b,
+            parameters=parameters,
+        )
+        self._mates.append(mate)
+
+        op = Operation(
+            op_type=OpType.ADD_MATE,
+            params=mate.to_dict(),
+            description=f"Mate {mate_type}: {body_a} ↔ {body_b}",
+        )
+        self._log.append(op)
+        return {"mate_type": mate_type, "total_mates": len(self._mates)}
+
+    def get_assembly_compound(self) -> TopoDS_Shape:
+        """Build a compound shape from all placed bodies for export."""
+        import cadquery as cq
+
+        if not self._bodies:
+            raise ModelingError("No bodies to assemble.")
+
+        builder = TopoDS_Builder()
+        compound = TopoDS_Compound()
+        builder.MakeCompound(compound)
+
+        for name, shape in self._bodies.items():
+            placement = self._placements.get(name)
+            if placement and (placement.x != 0 or placement.y != 0 or placement.z != 0
+                              or placement.angle_degrees != 0):
+                # Apply placement transform
+                placed = kernel.translate(shape, placement.x, placement.y, placement.z)
+                if placement.angle_degrees != 0:
+                    placed = kernel.rotate(
+                        placed,
+                        axis=(placement.axis_x, placement.axis_y, placement.axis_z),
+                        angle_degrees=placement.angle_degrees,
+                    )
+                builder.Add(compound, placed)
+            else:
+                builder.Add(compound, shape)
+
+        return compound
+
+    def export_assembly(self, path: str | Path) -> None:
+        """Export the full assembly as a STEP file."""
+        compound = self.get_assembly_compound()
+        save_step(compound, path)
+
+    # ------------------------------------------------------------------
+    # INTERFERENCE DETECTION
+    # ------------------------------------------------------------------
+
+    def check_interference(self, body_a: str, body_b: str) -> dict[str, Any]:
+        """Check if two bodies interfere (collide)."""
+        if body_a not in self._bodies:
+            raise ModelingError(f"Body '{body_a}' not found.")
+        if body_b not in self._bodies:
+            raise ModelingError(f"Body '{body_b}' not found.")
+
+        shape_a = self._bodies[body_a]
+        shape_b = self._bodies[body_b]
+
+        # Apply placements before checking
+        pa = self._placements.get(body_a)
+        if pa and (pa.x or pa.y or pa.z or pa.angle_degrees):
+            shape_a = kernel.translate(shape_a, pa.x, pa.y, pa.z)
+            if pa.angle_degrees:
+                shape_a = kernel.rotate(shape_a, (pa.axis_x, pa.axis_y, pa.axis_z), pa.angle_degrees)
+
+        pb = self._placements.get(body_b)
+        if pb and (pb.x or pb.y or pb.z or pb.angle_degrees):
+            shape_b = kernel.translate(shape_b, pb.x, pb.y, pb.z)
+            if pb.angle_degrees:
+                shape_b = kernel.rotate(shape_b, (pb.axis_x, pb.axis_y, pb.axis_z), pb.angle_degrees)
+
+        return kernel.check_interference(shape_a, shape_b)
+
+    def check_all_interferences(self) -> dict[str, Any]:
+        """Check all body pairs for interference."""
+        names = list(self._bodies.keys())
+        results = []
+        for i in range(len(names)):
+            for j in range(i + 1, len(names)):
+                result = self.check_interference(names[i], names[j])
+                result["body_a"] = names[i]
+                result["body_b"] = names[j]
+                results.append(result)
+
+        interferences = [r for r in results if r["interferes"]]
+        return {
+            "pairs_checked": len(results),
+            "interferences_found": len(interferences),
+            "results": results,
+        }
+
+    # ------------------------------------------------------------------
+    # BILL OF MATERIALS
+    # ------------------------------------------------------------------
+
+    def get_bom(self) -> dict[str, Any]:
+        """Get bill of materials for all bodies."""
+        from next3d.core.properties import MATERIALS, compute_physical_properties
+
+        items = []
+        total_mass = 0.0
+
+        for name, shape in self._bodies.items():
+            mat_key = self._body_materials.get(name, "steel")
+            density = MATERIALS.get(mat_key, 0.00785)
+
+            try:
+                props = compute_physical_properties(shape, density)
+                volume = props.volume
+                mass = props.mass
+            except Exception:
+                volume = 0
+                mass = 0
+
+            items.append({
+                "name": name,
+                "material": mat_key,
+                "volume_mm3": round(volume, 2),
+                "mass_grams": round(mass, 2),
+                "quantity": 1,
+            })
+            total_mass += mass
+
+        return {
+            "item_count": len(items),
+            "total_mass_grams": round(total_mass, 2),
+            "items": items,
         }
 
     # ------------------------------------------------------------------
@@ -106,10 +576,9 @@ class ModelingSession:
         return self._apply(model.shape, op)
 
     def export_step(self, path: str | Path) -> None:
-        """Export current geometry to a STEP file."""
-        if self._shape is None:
-            raise ModelingError("No geometry to export")
-        save_step(self._shape, path)
+        """Export current active body to a STEP file."""
+        shape = self._require_shape()
+        save_step(shape, path)
 
     def export_stl(
         self,
@@ -117,10 +586,8 @@ class ModelingSession:
         linear_deflection: float = 0.1,
         angular_deflection: float = 0.5,
     ) -> None:
-        """Export current geometry as STL."""
-        if self._shape is None:
-            raise ModelingError("No geometry to export")
-        kernel.export_stl(self._shape, str(path), linear_deflection, angular_deflection)
+        """Export current active body as STL."""
+        kernel.export_stl(self._require_shape(), str(path), linear_deflection, angular_deflection)
 
     def export_3mf(
         self,
@@ -128,10 +595,8 @@ class ModelingSession:
         linear_deflection: float = 0.1,
         angular_deflection: float = 0.5,
     ) -> None:
-        """Export current geometry as 3MF."""
-        if self._shape is None:
-            raise ModelingError("No geometry to export")
-        kernel.export_3mf(self._shape, str(path), linear_deflection, angular_deflection)
+        """Export current active body as 3MF."""
+        kernel.export_3mf(self._require_shape(), str(path), linear_deflection, angular_deflection)
 
     def render_png(
         self,
@@ -139,13 +604,11 @@ class ModelingSession:
         width: int = 800,
         height: int = 600,
     ) -> None:
-        """Render current geometry to PNG/SVG for visual feedback."""
-        if self._shape is None:
-            raise ModelingError("No geometry to render")
-        kernel.render_png(self._shape, str(path), width, height)
+        """Render current active body to PNG/SVG."""
+        kernel.render_png(self._require_shape(), str(path), width, height)
 
     # ------------------------------------------------------------------
-    # CREATE operations
+    # CREATE operations (backward compatible — use "default" body)
     # ------------------------------------------------------------------
 
     def create_box(
@@ -155,7 +618,7 @@ class ModelingSession:
         height: float,
         center: tuple[float, float, float] = (0, 0, 0),
     ) -> dict[str, Any]:
-        """Create a box. Replaces current geometry."""
+        """Create a box. Replaces active body geometry."""
         shape = kernel.create_box(length, width, height, center=center)
         op = Operation(
             op_type=OpType.CREATE_BOX,
@@ -214,10 +677,7 @@ class ModelingSession:
         axis_direction: tuple[float, float] = (0, 1),
         center: tuple[float, float, float] = (0, 0, 0),
     ) -> dict[str, Any]:
-        """Create a solid of revolution."""
-        shape = kernel.create_revolve(
-            points, angle_degrees, axis_origin, axis_direction, center,
-        )
+        shape = kernel.create_revolve(points, angle_degrees, axis_origin, axis_direction, center)
         op = Operation(
             op_type=OpType.CREATE_REVOLVE,
             params={
@@ -235,7 +695,6 @@ class ModelingSession:
         path_points: list[tuple[float, float, float]],
         center: tuple[float, float, float] = (0, 0, 0),
     ) -> dict[str, Any]:
-        """Create a solid by sweeping a profile along a path."""
         shape = kernel.create_sweep(profile_points, path_points, center)
         op = Operation(
             op_type=OpType.CREATE_SWEEP,
@@ -255,7 +714,6 @@ class ModelingSession:
         ruled: bool = False,
         center: tuple[float, float, float] = (0, 0, 0),
     ) -> dict[str, Any]:
-        """Create a solid by lofting between cross-sections."""
         shape = kernel.create_loft(sections, heights, ruled, center)
         op = Operation(
             op_type=OpType.CREATE_LOFT,
@@ -271,11 +729,6 @@ class ModelingSession:
     # MODIFY operations
     # ------------------------------------------------------------------
 
-    def _require_shape(self) -> TopoDS_Shape:
-        if self._shape is None:
-            raise ModelingError("No geometry loaded. Create or load a shape first.")
-        return self._shape
-
     def add_hole(
         self,
         center_x: float,
@@ -284,7 +737,6 @@ class ModelingSession:
         depth: float | None = None,
         face_selector: str = ">Z",
     ) -> dict[str, Any]:
-        """Drill a hole into the current shape."""
         shape = kernel.add_hole(
             self._require_shape(), center_x, center_y, diameter, depth, face_selector
         )
@@ -445,7 +897,6 @@ class ModelingSession:
         thickness: float,
         face_selector: str = ">Z",
     ) -> dict[str, Any]:
-        """Hollow out the solid to a uniform wall thickness."""
         shape = kernel.add_shell(self._require_shape(), thickness, face_selector)
         op = Operation(
             op_type=OpType.ADD_SHELL,
@@ -461,7 +912,6 @@ class ModelingSession:
         pull_direction: tuple[float, float, float] = (0, 0, 1),
         plane_selector: str = "<Z",
     ) -> dict[str, Any]:
-        """Add draft angles to faces."""
         shape = kernel.add_draft(
             self._require_shape(), angle_degrees, face_selector,
             pull_direction, plane_selector,
@@ -481,23 +931,13 @@ class ModelingSession:
     # ------------------------------------------------------------------
 
     def boolean_union(self, other_session: ModelingSession) -> dict[str, Any]:
-        """Union current shape with another session's shape."""
         shape = kernel.boolean_union(self._require_shape(), other_session._require_shape())
-        op = Operation(
-            op_type=OpType.BOOLEAN_UNION,
-            params={},
-            description="Boolean union",
-        )
+        op = Operation(op_type=OpType.BOOLEAN_UNION, params={}, description="Boolean union")
         return self._apply(shape, op)
 
     def boolean_cut(self, tool_shape: TopoDS_Shape) -> dict[str, Any]:
-        """Cut a tool shape from the current shape."""
         shape = kernel.boolean_cut(self._require_shape(), tool_shape)
-        op = Operation(
-            op_type=OpType.BOOLEAN_CUT,
-            params={},
-            description="Boolean cut",
-        )
+        op = Operation(op_type=OpType.BOOLEAN_CUT, params={}, description="Boolean cut")
         return self._apply(shape, op)
 
     # ------------------------------------------------------------------
@@ -532,15 +972,18 @@ class ModelingSession:
     # ------------------------------------------------------------------
 
     def undo(self) -> dict[str, Any]:
-        """Undo the last operation."""
-        if not self._history:
+        """Undo the last operation on the active body."""
+        name = self._active_body
+        history = self._histories.get(name, [])
+        if not history:
             raise ModelingError("Nothing to undo")
-        self._shape = self._history.pop()
-        self._graph = None
+        self._bodies[name] = history.pop()
+        self._graphs[name] = None
         removed = self._log.pop()
         g = self.graph
         return {
             "undone": removed.description if removed else "",
+            "body": name,
             "faces": len(g.faces),
             "features": len(g.features),
         }
@@ -550,13 +993,11 @@ class ModelingSession:
     # ------------------------------------------------------------------
 
     def to_script(self) -> str:
-        """Export the operation log as a CadQuery Python script."""
         return self._log.to_cadquery_script()
 
     def summary(self) -> dict[str, Any]:
-        """Get a summary of the current session state."""
         g = self.graph
-        return {
+        result = {
             "operations": self._log.length,
             "faces": len(g.faces),
             "edges": len(g.edges),
@@ -565,3 +1006,8 @@ class ModelingSession:
             "solids": len(g.solids),
             "feature_types": [f.feature_type for f in g.features],
         }
+        if len(self._bodies) > 1:
+            result["active_body"] = self._active_body
+            result["total_bodies"] = len(self._bodies)
+            result["body_names"] = list(self._bodies.keys())
+        return result

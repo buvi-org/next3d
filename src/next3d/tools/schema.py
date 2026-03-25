@@ -360,6 +360,97 @@ class LoadStep(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# MULTI-BODY tools
+# ---------------------------------------------------------------------------
+
+class CreateNamedBody(BaseModel):
+    """Create a new named body and make it active. Enables multi-body workflows."""
+
+    name: str = Field(..., description="Unique body name (e.g. 'bracket', 'shaft', 'housing')")
+    shape_type: Literal["box", "cylinder", "sphere", "extrusion"] = Field(
+        ..., description="Type of base shape",
+    )
+    material: str = Field("steel", description="Material: steel, aluminum, titanium, brass, copper, nylon, abs, pla")
+    length: float | None = Field(None, description="X dimension (box)")
+    width: float | None = Field(None, description="Y dimension (box)")
+    height: float | None = Field(None, description="Z dimension (box/cylinder/extrusion)")
+    radius: float | None = Field(None, description="Radius (cylinder/sphere)")
+
+
+class SetActiveBody(BaseModel):
+    """Switch which body subsequent operations target."""
+
+    name: str = Field(..., description="Body name to make active")
+
+
+class ListBodies(BaseModel):
+    """List all bodies with summary info (faces, material, mass, placement)."""
+    pass
+
+
+class DeleteBody(BaseModel):
+    """Delete a named body from the session."""
+
+    name: str = Field(..., description="Body name to delete")
+
+
+class PlaceBody(BaseModel):
+    """Position a body in assembly space."""
+
+    name: str = Field(..., description="Body name to place")
+    x: float = Field(0, description="X translation in mm")
+    y: float = Field(0, description="Y translation in mm")
+    z: float = Field(0, description="Z translation in mm")
+    axis_x: float = Field(0, description="X component of rotation axis")
+    axis_y: float = Field(0, description="Y component of rotation axis")
+    axis_z: float = Field(1, description="Z component of rotation axis")
+    angle_degrees: float = Field(0, description="Rotation angle in degrees")
+
+
+class CheckInterference(BaseModel):
+    """Check if two bodies collide/interfere."""
+
+    body_a: str = Field(..., description="First body name")
+    body_b: str = Field(..., description="Second body name")
+
+
+class GetBom(BaseModel):
+    """Get bill of materials — part list with materials, volumes, and masses."""
+    pass
+
+
+class AddStandardPart(BaseModel):
+    """Insert a standard ISO metric fastener into the assembly."""
+
+    name: str = Field(..., description="Body name for the part (e.g. 'bolt_1')")
+    part_type: Literal["hex_bolt", "hex_nut", "flat_washer", "socket_head_cap_screw"] = Field(
+        ..., description="Type of standard part",
+    )
+    size: str = Field(..., description="ISO metric size: M3, M4, M5, M6, M8, M10, M12")
+    length: float | None = Field(None, description="Shank length in mm (for bolts/screws)")
+
+
+class ExportAssembly(BaseModel):
+    """Export the full assembly (all bodies with placements) as a STEP file."""
+
+    output_path: str = Field(..., description="Output STEP file path")
+
+
+class AddMateConstraint(BaseModel):
+    """Declare a mate constraint between two bodies (for documentation and validation)."""
+
+    mate_type: Literal["coincident", "concentric", "flush", "distance", "angle"] = Field(
+        ..., description="Type of mate constraint",
+    )
+    body_a: str = Field(..., description="First body name")
+    entity_a: str = Field(..., description="Persistent ID of face/edge on body A")
+    body_b: str = Field(..., description="Second body name")
+    entity_b: str = Field(..., description="Persistent ID of face/edge on body B")
+    distance: float | None = Field(None, description="Distance value (for distance mate)")
+    angle: float | None = Field(None, description="Angle value in degrees (for angle mate)")
+
+
+# ---------------------------------------------------------------------------
 # Tool registry
 # ---------------------------------------------------------------------------
 
@@ -394,6 +485,18 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "get_features": GetFeatures,
     "find_faces": FindFaces,
     "measure_distance": MeasureDistance,
+    # Multi-body
+    "create_named_body": CreateNamedBody,
+    "set_active_body": SetActiveBody,
+    "list_bodies": ListBodies,
+    "delete_body": DeleteBody,
+    # Assembly
+    "place_body": PlaceBody,
+    "add_mate_constraint": AddMateConstraint,
+    "check_interference": CheckInterference,
+    "get_bom": GetBom,
+    "add_standard_part": AddStandardPart,
+    "export_assembly": ExportAssembly,
     # Session
     "undo": Undo,
     "export_step": ExportStep,

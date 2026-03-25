@@ -296,7 +296,300 @@ class TestToolExecutorAdvanced:
 
     def test_tool_count_increased(self):
         """Verify we now have more tools after Phase 4."""
-        assert len(TOOL_SCHEMAS) >= 32  # was 22, now 32 with Phase 4 additions
+        assert len(TOOL_SCHEMAS) >= 32  # was 22, now 42 with Phase 4+5 additions
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Multi-Body, Assembly, Standard Parts
+# ---------------------------------------------------------------------------
+
+class TestMultiBody:
+    def test_create_named_bodies(self):
+        """Create multiple named bodies."""
+        s = ModelingSession()
+        s.create_body("bracket", "box", length=100, width=60, height=20)
+        s.create_body("shaft", "cylinder", radius=5, height=80)
+        assert len(s.body_names) == 2
+        assert "bracket" in s.body_names
+        assert "shaft" in s.body_names
+
+    def test_switch_active_body(self):
+        """Switch between bodies and verify isolation."""
+        s = ModelingSession()
+        s.create_body("a", "box", length=50, width=50, height=10)
+        s.create_body("b", "box", length=100, width=80, height=30)
+        s.set_active_body("a")
+        g_a = s.graph
+        s.set_active_body("b")
+        g_b = s.graph
+        # Both are boxes with 6 faces, but different sizes
+        assert len(g_a.faces) == 6
+        assert len(g_b.faces) == 6
+
+    def test_modify_specific_body(self):
+        """Modify only the active body, other body unaffected."""
+        s = ModelingSession()
+        s.create_body("plate", "box", length=100, width=60, height=10)
+        s.create_body("block", "box", length=50, width=50, height=50)
+        s.set_active_body("plate")
+        s.add_hole(0, 0, 10)
+        # Plate has a hole, block doesn't
+        g_plate = s.graph
+        assert len(g_plate.faces) > 6
+        s.set_active_body("block")
+        g_block = s.graph
+        assert len(g_block.faces) == 6
+
+    def test_list_bodies(self):
+        s = ModelingSession()
+        s.create_body("part_a", "box", material="aluminum", length=50, width=30, height=10)
+        s.create_body("part_b", "cylinder", material="steel", radius=10, height=40)
+        data = s.list_bodies()
+        assert data["count"] == 2
+        names = [b["name"] for b in data["bodies"]]
+        assert "part_a" in names
+        assert "part_b" in names
+        # Check material assignment
+        mats = {b["name"]: b["material"] for b in data["bodies"]}
+        assert mats["part_a"] == "aluminum"
+        assert mats["part_b"] == "steel"
+
+    def test_delete_body(self):
+        s = ModelingSession()
+        s.create_body("temp", "box", length=10, width=10, height=10)
+        s.create_body("keep", "box", length=20, width=20, height=20)
+        s.delete_body("temp")
+        assert "temp" not in s.body_names
+        assert "keep" in s.body_names
+
+    def test_duplicate_body(self):
+        s = ModelingSession()
+        s.create_body("original", "box", length=50, width=30, height=10)
+        s.duplicate_body("original", "copy")
+        assert len(s.body_names) == 2
+        # Both should have same face count
+        s.set_active_body("original")
+        f1 = len(s.graph.faces)
+        s.set_active_body("copy")
+        f2 = len(s.graph.faces)
+        assert f1 == f2
+
+    def test_backward_compat_single_body(self):
+        """Legacy single-body workflow still works."""
+        s = ModelingSession()
+        s.create_box(100, 60, 20)
+        s.add_hole(0, 0, 10)
+        g = s.graph
+        assert len(g.faces) > 6
+        assert s.active_body_name == "default"
+
+
+class TestAssembly:
+    def test_place_body(self):
+        s = ModelingSession()
+        s.create_body("base", "box", length=100, width=100, height=10)
+        s.create_body("pillar", "cylinder", radius=5, height=50)
+        data = s.place_body("pillar", x=20, y=20, z=10)
+        assert data["body"] == "pillar"
+        assert data["placement"]["translation"]["z"] == 10
+
+    def test_export_assembly(self, tmp_path):
+        s = ModelingSession()
+        s.create_body("base", "box", length=100, width=100, height=10)
+        s.create_body("pillar", "cylinder", radius=5, height=50)
+        s.place_body("pillar", z=10)
+        out = tmp_path / "assembly.step"
+        s.export_assembly(out)
+        assert out.exists()
+        assert out.stat().st_size > 0
+
+    def test_check_interference_clear(self):
+        """Two separated bodies should not interfere."""
+        s = ModelingSession()
+        s.create_body("a", "box", length=10, width=10, height=10)
+        s.create_body("b", "box", length=10, width=10, height=10)
+        s.place_body("b", x=50)  # far apart
+        result = s.check_interference("a", "b")
+        assert result["interferes"] is False
+
+    def test_check_interference_overlap(self):
+        """Two overlapping bodies should interfere."""
+        s = ModelingSession()
+        s.create_body("a", "box", length=20, width=20, height=20)
+        s.create_body("b", "box", length=20, width=20, height=20)
+        # Both at origin = full overlap
+        result = s.check_interference("a", "b")
+        assert result["interferes"] is True
+        assert result["interference_volume_mm3"] > 0
+
+    def test_bom(self):
+        s = ModelingSession()
+        s.create_body("plate", "box", material="aluminum", length=100, width=60, height=5)
+        s.create_body("bracket", "box", material="steel", length=30, width=20, height=40)
+        bom = s.get_bom()
+        assert bom["item_count"] == 2
+        assert bom["total_mass_grams"] > 0
+        names = [item["name"] for item in bom["items"]]
+        assert "plate" in names
+        assert "bracket" in names
+
+    def test_add_mate_constraint(self):
+        s = ModelingSession()
+        s.create_body("a", "box", length=50, width=50, height=10)
+        s.create_body("b", "box", length=50, width=50, height=10)
+        data = s.add_mate("coincident", "a", "face_top", "b", "face_bottom")
+        assert data["mate_type"] == "coincident"
+        assert data["total_mates"] == 1
+
+
+class TestStandardParts:
+    def test_hex_bolt(self):
+        from next3d.parts.fasteners import iso_hex_bolt
+        shape = iso_hex_bolt("M6", 30)
+        g = build_semantic_graph_from_shape(shape)
+        assert len(g.solids) == 1
+        assert len(g.faces) > 4
+
+    def test_hex_nut(self):
+        from next3d.parts.fasteners import iso_hex_nut
+        shape = iso_hex_nut("M8")
+        g = build_semantic_graph_from_shape(shape)
+        assert len(g.solids) == 1
+
+    def test_flat_washer(self):
+        from next3d.parts.fasteners import iso_flat_washer
+        shape = iso_flat_washer("M6")
+        g = build_semantic_graph_from_shape(shape)
+        assert len(g.solids) == 1
+
+    def test_socket_head_cap_screw(self):
+        from next3d.parts.fasteners import iso_socket_head_cap_screw
+        shape = iso_socket_head_cap_screw("M5", 25)
+        g = build_semantic_graph_from_shape(shape)
+        assert len(g.solids) == 1
+
+    def test_add_standard_part_tool(self):
+        ex = ToolExecutor()
+        r = ex.call("add_standard_part", {
+            "name": "bolt_1", "part_type": "hex_bolt", "size": "M6", "length": 25,
+        })
+        assert r.success
+        assert r.data["name"] == "bolt_1"
+
+    def test_list_sizes(self):
+        from next3d.parts.fasteners import list_available_sizes
+        sizes = list_available_sizes()
+        assert "M6" in sizes
+        assert "M8" in sizes
+        assert len(sizes) >= 7
+
+
+class TestMultiBodyToolExecutor:
+    def test_create_and_list(self):
+        ex = ToolExecutor()
+        ex.call("create_named_body", {
+            "name": "plate", "shape_type": "box",
+            "length": 100, "width": 60, "height": 10,
+        })
+        ex.call("create_named_body", {
+            "name": "shaft", "shape_type": "cylinder",
+            "radius": 5, "height": 50,
+        })
+        r = ex.call("list_bodies", {})
+        assert r.success
+        assert r.data["count"] == 2
+
+    def test_switch_and_modify(self):
+        ex = ToolExecutor()
+        ex.call("create_named_body", {
+            "name": "plate", "shape_type": "box",
+            "length": 100, "width": 60, "height": 10,
+        })
+        ex.call("create_named_body", {
+            "name": "block", "shape_type": "box",
+            "length": 50, "width": 50, "height": 50,
+        })
+        ex.call("set_active_body", {"name": "plate"})
+        r = ex.call("add_hole", {"center_x": 0, "center_y": 0, "diameter": 10})
+        assert r.success
+        assert r.data["body"] == "plate"
+        assert r.data["faces"] > 6
+
+    def test_place_and_export(self, tmp_path):
+        ex = ToolExecutor()
+        ex.call("create_named_body", {
+            "name": "base", "shape_type": "box",
+            "length": 100, "width": 100, "height": 10,
+        })
+        ex.call("create_named_body", {
+            "name": "column", "shape_type": "cylinder",
+            "radius": 8, "height": 60,
+        })
+        ex.call("place_body", {"name": "column", "z": 10})
+        out = str(tmp_path / "assembly.step")
+        r = ex.call("export_assembly", {"output_path": out})
+        assert r.success
+        assert Path(out).exists()
+
+    def test_interference_check(self):
+        ex = ToolExecutor()
+        ex.call("create_named_body", {
+            "name": "a", "shape_type": "box",
+            "length": 20, "width": 20, "height": 20,
+        })
+        ex.call("create_named_body", {
+            "name": "b", "shape_type": "box",
+            "length": 20, "width": 20, "height": 20,
+        })
+        r = ex.call("check_interference", {"body_a": "a", "body_b": "b"})
+        assert r.success
+        assert r.data["interferes"] is True
+
+    def test_bom_tool(self):
+        ex = ToolExecutor()
+        ex.call("create_named_body", {
+            "name": "plate", "shape_type": "box", "material": "aluminum",
+            "length": 100, "width": 60, "height": 5,
+        })
+        r = ex.call("get_bom", {})
+        assert r.success
+        assert r.data["item_count"] == 1
+        assert r.data["items"][0]["material"] == "aluminum"
+
+    def test_full_assembly_workflow(self, tmp_path):
+        """Complete assembly workflow: parts → place → check → BOM → export."""
+        ex = ToolExecutor()
+
+        # Create parts
+        ex.call("create_named_body", {
+            "name": "base_plate", "shape_type": "box", "material": "aluminum",
+            "length": 100, "width": 80, "height": 5,
+        })
+        ex.call("set_active_body", {"name": "base_plate"})
+        ex.call("add_hole", {"center_x": 30, "center_y": 25, "diameter": 6.4})
+        ex.call("add_hole", {"center_x": -30, "center_y": 25, "diameter": 6.4})
+
+        # Add standard fasteners
+        ex.call("add_standard_part", {
+            "name": "bolt_1", "part_type": "hex_bolt", "size": "M6", "length": 20,
+        })
+        ex.call("add_standard_part", {
+            "name": "bolt_2", "part_type": "hex_bolt", "size": "M6", "length": 20,
+        })
+
+        # Place bolts
+        ex.call("place_body", {"name": "bolt_1", "x": 30, "y": 25, "z": 5})
+        ex.call("place_body", {"name": "bolt_2", "x": -30, "y": 25, "z": 5})
+
+        # Check BOM
+        r = ex.call("get_bom", {})
+        assert r.data["item_count"] == 3  # plate + 2 bolts
+
+        # Export assembly
+        out = str(tmp_path / "full_assembly.step")
+        r = ex.call("export_assembly", {"output_path": out})
+        assert r.success
+        assert Path(out).exists()
 
 
 # ---------------------------------------------------------------------------

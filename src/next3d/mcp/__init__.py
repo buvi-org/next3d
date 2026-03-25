@@ -709,12 +709,184 @@ def render_png(
 
 
 @mcp.tool()
+def export_assembly(output_path: str) -> str:
+    """Export the full assembly (all bodies with placements) as a STEP file.
+
+    Args:
+        output_path: Output STEP file path
+    """
+    r = _executor.call("export_assembly", {"output_path": output_path})
+    return _format_result(r)
+
+
+@mcp.tool()
 def export_script() -> str:
     """Export the operation history as a standalone CadQuery Python script.
 
     Returns the full Python code that reproduces the current geometry.
     """
     r = _executor.call("export_script", {})
+    return _format_result(r)
+
+
+# ---------------------------------------------------------------------------
+# MULTI-BODY tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def create_named_body(
+    name: str,
+    shape_type: str,
+    material: str = "steel",
+    length: float | None = None,
+    width: float | None = None,
+    height: float | None = None,
+    radius: float | None = None,
+) -> str:
+    """Create a new named body. Enables multi-part assemblies.
+
+    Args:
+        name: Unique body name (e.g. 'bracket', 'shaft')
+        shape_type: "box", "cylinder", "sphere", or "extrusion"
+        material: Material: steel, aluminum, titanium, brass, copper, nylon, abs, pla
+        length: X dimension (box)
+        width: Y dimension (box)
+        height: Z dimension (box/cylinder/extrusion)
+        radius: Radius (cylinder/sphere)
+    """
+    r = _executor.call("create_named_body", {
+        "name": name, "shape_type": shape_type, "material": material,
+        "length": length, "width": width, "height": height, "radius": radius,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def set_active_body(name: str) -> str:
+    """Switch which body subsequent operations (add_hole, add_fillet, etc.) target.
+
+    Args:
+        name: Body name to make active
+    """
+    r = _executor.call("set_active_body", {"name": name})
+    return _format_result(r)
+
+
+@mcp.tool()
+def list_bodies() -> str:
+    """List all bodies with faces, material, mass, and placement info."""
+    r = _executor.call("list_bodies", {})
+    return _format_result(r)
+
+
+@mcp.tool()
+def delete_body(name: str) -> str:
+    """Delete a named body from the session.
+
+    Args:
+        name: Body to delete
+    """
+    r = _executor.call("delete_body", {"name": name})
+    return _format_result(r)
+
+
+@mcp.tool()
+def place_body(
+    name: str,
+    x: float = 0,
+    y: float = 0,
+    z: float = 0,
+    axis_x: float = 0,
+    axis_y: float = 0,
+    axis_z: float = 1,
+    angle_degrees: float = 0,
+) -> str:
+    """Position a body in assembly space.
+
+    Args:
+        name: Body to place
+        x: X translation in mm
+        y: Y translation in mm
+        z: Z translation in mm
+        axis_x: Rotation axis X
+        axis_y: Rotation axis Y
+        axis_z: Rotation axis Z (default 1 = around Z)
+        angle_degrees: Rotation angle
+    """
+    r = _executor.call("place_body", {
+        "name": name, "x": x, "y": y, "z": z,
+        "axis_x": axis_x, "axis_y": axis_y, "axis_z": axis_z,
+        "angle_degrees": angle_degrees,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def check_interference(body_a: str, body_b: str) -> str:
+    """Check if two bodies collide/interfere.
+
+    Args:
+        body_a: First body name
+        body_b: Second body name
+    """
+    r = _executor.call("check_interference", {"body_a": body_a, "body_b": body_b})
+    return _format_result(r)
+
+
+@mcp.tool()
+def get_bom() -> str:
+    """Get bill of materials — part list with materials, volumes, and masses."""
+    r = _executor.call("get_bom", {})
+    return _format_result(r)
+
+
+@mcp.tool()
+def add_standard_part(
+    name: str,
+    part_type: str,
+    size: str,
+    length: float | None = None,
+) -> str:
+    """Insert a standard ISO metric fastener.
+
+    Args:
+        name: Body name for the part (e.g. 'bolt_1')
+        part_type: hex_bolt, hex_nut, flat_washer, socket_head_cap_screw
+        size: ISO size: M3, M4, M5, M6, M8, M10, M12
+        length: Shank length in mm (for bolts/screws)
+    """
+    r = _executor.call("add_standard_part", {
+        "name": name, "part_type": part_type, "size": size, "length": length,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def add_mate_constraint(
+    mate_type: str,
+    body_a: str,
+    entity_a: str,
+    body_b: str,
+    entity_b: str,
+    distance: float | None = None,
+    angle: float | None = None,
+) -> str:
+    """Declare a mate constraint between two bodies.
+
+    Args:
+        mate_type: coincident, concentric, flush, distance, angle
+        body_a: First body name
+        entity_a: Persistent ID of face/edge on body A
+        body_b: Second body name
+        entity_b: Persistent ID of face/edge on body B
+        distance: Distance value (for distance mate)
+        angle: Angle value (for angle mate)
+    """
+    r = _executor.call("add_mate_constraint", {
+        "mate_type": mate_type, "body_a": body_a, "entity_a": entity_a,
+        "body_b": body_b, "entity_b": entity_b,
+        "distance": distance, "angle": angle,
+    })
     return _format_result(r)
 
 

@@ -608,6 +608,42 @@ def add_draft(
 # EXPORT — STL and 3MF mesh formats
 # ---------------------------------------------------------------------------
 
+def check_interference(
+    shape_a: TopoDS_Shape,
+    shape_b: TopoDS_Shape,
+) -> dict:
+    """Check if two shapes interfere (collide).
+
+    Returns dict with interferes (bool), interference_volume, and min_clearance.
+    """
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
+    from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+
+    result: dict = {"interferes": False, "interference_volume_mm3": 0.0, "min_clearance_mm": 0.0}
+
+    # Check intersection volume
+    common = BRepAlgoAPI_Common(shape_a, shape_b)
+    if common.IsDone():
+        common_shape = common.Shape()
+        if not common_shape.IsNull():
+            props = GProp_GProps()
+            BRepGProp.VolumeProperties_s(common_shape, props)
+            vol = props.Mass()
+            if vol > 1e-6:  # tolerance
+                result["interferes"] = True
+                result["interference_volume_mm3"] = round(vol, 4)
+                return result
+
+    # No interference — compute min clearance
+    dist_calc = BRepExtrema_DistShapeShape(shape_a, shape_b)
+    if dist_calc.IsDone() and dist_calc.NbSolution() > 0:
+        result["min_clearance_mm"] = round(dist_calc.Value(), 4)
+
+    return result
+
+
 def export_stl(
     shape: TopoDS_Shape,
     path: str,
