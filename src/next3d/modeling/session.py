@@ -872,6 +872,109 @@ class ModelingSession:
         }
 
     # ------------------------------------------------------------------
+    # FEA — Finite Element Analysis
+    # ------------------------------------------------------------------
+
+    def run_fea(
+        self,
+        plate_width: float,
+        plate_height: float,
+        plate_thickness: float,
+        grid_spacing_x: float = 0,
+        grid_spacing_y: float = 0,
+        rhs_size: str | None = None,
+        material: str = "steel_mild",
+        pressure_mpa: float = 0,
+        point_loads: list[dict] | None = None,
+        bc_type: str = "fixed_edges",
+        weld_type: str = "full",
+        weld_spacing: float = 50.0,
+    ) -> dict[str, Any]:
+        """Run plate/beam FEA on a stiffened panel.
+
+        General-purpose structural analysis for any plate + stiffener configuration.
+        """
+        from next3d.core.fea import (
+            FEASetup, RHS_SIZES, MATERIALS as FEA_MATERIALS, run_fea,
+        )
+
+        mat = FEA_MATERIALS.get(material)
+        if mat is None:
+            raise ModelingError(
+                f"Unknown material: {material}. "
+                f"Available: {', '.join(FEA_MATERIALS)}"
+            )
+
+        rhs = None
+        if rhs_size:
+            rhs = RHS_SIZES.get(rhs_size)
+            if rhs is None:
+                raise ModelingError(
+                    f"Unknown RHS size: {rhs_size}. "
+                    f"Available: {', '.join(RHS_SIZES)}"
+                )
+
+        setup = FEASetup(
+            plate_width=plate_width,
+            plate_height=plate_height,
+            plate_thickness=plate_thickness,
+            grid_spacing_x=grid_spacing_x or plate_width,
+            grid_spacing_y=grid_spacing_y or plate_height,
+            rhs_section=rhs,
+            material=mat,
+            pressure=pressure_mpa,
+            point_loads=point_loads or [],
+            bc_type=bc_type,
+            weld_type=weld_type,
+            weld_spacing=weld_spacing,
+        )
+
+        result = run_fea(setup)
+        return result.to_dict()
+
+    def run_fea_parametric(
+        self,
+        base_config: dict[str, Any],
+        variations: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Run FEA across multiple configurations for comparison."""
+        from next3d.core.fea import (
+            FEASetup, RHS_SIZES, MATERIALS as FEA_MATERIALS,
+            parametric_study,
+        )
+        import dataclasses
+
+        mat = FEA_MATERIALS.get(base_config.get("material", "steel_mild"))
+        rhs_key = base_config.get("rhs_size")
+        rhs = RHS_SIZES.get(rhs_key) if rhs_key else None
+
+        base = FEASetup(
+            plate_width=base_config.get("plate_width", 300),
+            plate_height=base_config.get("plate_height", 300),
+            plate_thickness=base_config.get("plate_thickness", 3),
+            grid_spacing_x=base_config.get("grid_spacing_x", 300),
+            grid_spacing_y=base_config.get("grid_spacing_y", 300),
+            rhs_section=rhs,
+            material=mat,
+            pressure=base_config.get("pressure_mpa", 0.1),
+            bc_type=base_config.get("bc_type", "fixed_edges"),
+            weld_type=base_config.get("weld_type", "full"),
+        )
+
+        # Process variations — resolve rhs_size strings to objects
+        processed = []
+        for var in variations:
+            v = dict(var)
+            if "rhs_size" in v:
+                v["rhs_section"] = RHS_SIZES.get(v.pop("rhs_size"))
+            if "material" in v:
+                v["material"] = FEA_MATERIALS.get(v.pop("material"), mat)
+            processed.append(v)
+
+        results = parametric_study(base, processed)
+        return {"config_count": len(results), "results": results}
+
+    # ------------------------------------------------------------------
     # LOAD / EXPORT
     # ------------------------------------------------------------------
 

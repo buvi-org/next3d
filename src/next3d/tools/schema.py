@@ -669,6 +669,42 @@ class RunTopologyOptimization(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# FEA tools
+# ---------------------------------------------------------------------------
+
+class RunFEA(BaseModel):
+    """Run Finite Element Analysis on a plate/stiffener structure.
+
+    General-purpose structural solver for plates with optional RHS stiffener grids.
+    Computes deflections, stresses, and safety factors.
+
+    Materials: steel_mild, steel_ss304, steel_ss316, aluminum_6061, aluminum_5052, carbon_steel.
+    RHS sizes: 25x25x2, 25x25x3, 40x40x2, 40x40x3, 50x50x3, 50x50x4, 50x25x2, 50x25x3, 75x50x3, 100x50x3, 100x100x4."""
+
+    plate_width: float = Field(..., description="Plate width in mm (X direction)", gt=0)
+    plate_height: float = Field(..., description="Plate height in mm (Y direction)", gt=0)
+    plate_thickness: float = Field(..., description="Plate/sheet thickness in mm", gt=0)
+    grid_spacing_x: float = Field(0, description="Stiffener grid spacing X in mm (0 = no stiffeners)")
+    grid_spacing_y: float = Field(0, description="Stiffener grid spacing Y in mm (0 = no stiffeners)")
+    rhs_size: str | None = Field(None, description="RHS stiffener section (e.g. '50x50x3'). null = plate only")
+    material: str = Field("steel_mild", description="Material name")
+    pressure_mpa: float = Field(0, description="Uniform pressure in MPa (N/mm²)")
+    point_loads: list[dict] | None = Field(None, description="Point loads: [{x, y, force}, ...]")
+    bc_type: str = Field("fixed_edges", description="Boundary condition: fixed_edges, simply_supported, fixed_corners")
+    weld_type: str = Field("full", description="Weld type: full, intermittent, spot")
+    weld_spacing: float = Field(50, description="Weld spacing in mm (for intermittent/spot)", gt=0)
+
+
+class RunFEAParametric(BaseModel):
+    """Run FEA across multiple configurations for comparison.
+
+    Compare different materials, RHS sizes, weld types, etc. in one call."""
+
+    base_config: dict = Field(..., description="Base configuration dict with plate_width, plate_height, plate_thickness, etc.")
+    variations: list[dict] = Field(..., description="List of dicts with fields to override per run, e.g. [{rhs_size: '25x25x2'}, {rhs_size: '50x50x3'}]")
+
+
+# ---------------------------------------------------------------------------
 # Tool registry
 # ---------------------------------------------------------------------------
 
@@ -737,6 +773,9 @@ TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "add_load": AddLoad,
     "add_boundary_condition": AddBoundaryCondition,
     "run_topology_optimization": RunTopologyOptimization,
+    # FEA
+    "run_fea": RunFEA,
+    "run_fea_parametric": RunFEAParametric,
     # Session
     "undo": Undo,
     "export_step": ExportStep,

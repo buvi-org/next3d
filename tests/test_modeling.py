@@ -390,6 +390,103 @@ class TestParametricDimensions:
         assert r.data["parameters"]["wall_thickness"]["value"] == 2.5
 
 
+class TestFEA:
+    def test_plain_plate_fea(self):
+        """FEA on a plain plate without stiffeners."""
+        s = ModelingSession()
+        result = s.run_fea(
+            plate_width=300, plate_height=300, plate_thickness=3.0,
+            material="steel_mild", pressure_mpa=0.01, bc_type="fixed_edges",
+        )
+        assert "max_deflection_mm" in result
+        assert "max_plate_stress_MPa" in result
+        assert "safety_factor_plate" in result
+        assert result["max_deflection_mm"] >= 0
+
+    def test_stiffened_plate_fea(self):
+        """FEA on a plate with RHS stiffener grid."""
+        s = ModelingSession()
+        result = s.run_fea(
+            plate_width=304.8, plate_height=304.8, plate_thickness=3.0,
+            grid_spacing_x=152.4, grid_spacing_y=152.4,
+            rhs_size="50x50x3", material="steel_mild",
+            pressure_mpa=0.1, bc_type="fixed_edges",
+        )
+        assert result["max_deflection_mm"] >= 0
+        assert result["mesh"]["beam_elements"] > 0
+        assert "verdict" in result
+
+    def test_fea_different_materials(self):
+        """FEA with aluminum vs steel."""
+        s = ModelingSession()
+        steel = s.run_fea(
+            plate_width=200, plate_height=200, plate_thickness=5.0,
+            material="steel_mild", pressure_mpa=0.05, bc_type="simply_supported",
+        )
+        alum = s.run_fea(
+            plate_width=200, plate_height=200, plate_thickness=5.0,
+            material="aluminum_6061", pressure_mpa=0.05, bc_type="simply_supported",
+        )
+        # Aluminum deflects more (lower E)
+        assert alum["max_deflection_mm"] > steel["max_deflection_mm"]
+
+    def test_fea_point_load(self):
+        """FEA with a point load at center."""
+        s = ModelingSession()
+        result = s.run_fea(
+            plate_width=200, plate_height=200, plate_thickness=5.0,
+            material="steel_mild",
+            point_loads=[{"x": 100, "y": 100, "force": 1000}],
+            bc_type="simply_supported",
+        )
+        assert result["center_deflection_mm"] > 0
+
+    def test_fea_via_executor(self):
+        """FEA through the tool executor."""
+        ex = ToolExecutor()
+        r = ex.call("run_fea", {
+            "plate_width": 304.8, "plate_height": 304.8,
+            "plate_thickness": 3.0,
+            "grid_spacing_x": 152.4, "grid_spacing_y": 152.4,
+            "rhs_size": "50x50x3",
+            "material": "steel_mild",
+            "pressure_mpa": 0.1,
+            "bc_type": "fixed_edges",
+        })
+        assert r.success
+        assert "max_deflection_mm" in r.data
+
+    def test_fea_parametric(self):
+        """Parametric FEA comparison."""
+        ex = ToolExecutor()
+        r = ex.call("run_fea_parametric", {
+            "base_config": {
+                "plate_width": 300, "plate_height": 300,
+                "plate_thickness": 3, "pressure_mpa": 0.05,
+                "rhs_size": "25x25x2",
+                "grid_spacing_x": 150, "grid_spacing_y": 150,
+            },
+            "variations": [
+                {"rhs_size": "25x25x2", "label": "Small RHS"},
+                {"rhs_size": "50x50x3", "label": "Large RHS"},
+            ],
+        })
+        assert r.success
+        assert r.data["config_count"] == 2
+
+    def test_chamber_wall_convenience(self):
+        """Test the chamber wall convenience function directly."""
+        from next3d.core.fea import analyze_chamber_wall
+        result = analyze_chamber_wall(
+            plate_width=304.8, plate_height=304.8,
+            plate_thickness=3.0, grid_spacing=152.4,
+            rhs_size="50x50x3", pressure_mpa=0.1,
+        )
+        assert "max_deflection_mm" in result
+        assert "passes_2mm_limit" in result
+        assert "rhs_properties" in result
+
+
 class TestMultiBody:
     def test_create_named_bodies(self):
         """Create multiple named bodies."""

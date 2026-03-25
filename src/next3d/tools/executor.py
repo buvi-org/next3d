@@ -506,6 +506,35 @@ class ToolExecutor:
         )
 
     # ------------------------------------------------------------------
+    # FEA handlers
+    # ------------------------------------------------------------------
+
+    def _handle_run_fea(self, p) -> ToolResult:
+        data = self._session.run_fea(
+            plate_width=p.plate_width,
+            plate_height=p.plate_height,
+            plate_thickness=p.plate_thickness,
+            grid_spacing_x=p.grid_spacing_x,
+            grid_spacing_y=p.grid_spacing_y,
+            rhs_size=p.rhs_size,
+            material=p.material,
+            pressure_mpa=p.pressure_mpa,
+            point_loads=p.point_loads,
+            bc_type=p.bc_type,
+            weld_type=p.weld_type,
+            weld_spacing=p.weld_spacing,
+        )
+        verdict = data.get("verdict", "")
+        return ToolResult(message=f"FEA: {verdict}", data=data)
+
+    def _handle_run_fea_parametric(self, p) -> ToolResult:
+        data = self._session.run_fea_parametric(p.base_config, p.variations)
+        return ToolResult(
+            message=f"FEA parametric: {data['config_count']} configurations compared",
+            data=data,
+        )
+
+    # ------------------------------------------------------------------
     # SESSION handlers
     # ------------------------------------------------------------------
 

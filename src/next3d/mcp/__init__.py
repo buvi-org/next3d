@@ -1084,6 +1084,67 @@ def sketch_revolve(
 
 
 @mcp.tool()
+def run_fea(
+    plate_width: float,
+    plate_height: float,
+    plate_thickness: float,
+    grid_spacing_x: float = 0,
+    grid_spacing_y: float = 0,
+    rhs_size: str | None = None,
+    material: str = "steel_mild",
+    pressure_mpa: float = 0,
+    point_loads: list[dict] | None = None,
+    bc_type: str = "fixed_edges",
+    weld_type: str = "full",
+    weld_spacing: float = 50,
+) -> str:
+    """Run Finite Element Analysis on a plate/stiffener structure.
+
+    General-purpose structural solver: compute deflections, stresses, safety factors.
+
+    Args:
+        plate_width: Width in mm
+        plate_height: Height in mm
+        plate_thickness: Sheet thickness in mm
+        grid_spacing_x: Stiffener spacing X (0 = no stiffeners)
+        grid_spacing_y: Stiffener spacing Y (0 = no stiffeners)
+        rhs_size: RHS section e.g. '50x50x3', null = plate only
+        material: steel_mild, steel_ss304, aluminum_6061, etc.
+        pressure_mpa: Uniform pressure in MPa
+        point_loads: [{x, y, force}, ...]
+        bc_type: fixed_edges, simply_supported, fixed_corners
+        weld_type: full, intermittent, spot
+        weld_spacing: Weld spacing in mm (for intermittent/spot)
+    """
+    r = _executor.call("run_fea", {
+        "plate_width": plate_width, "plate_height": plate_height,
+        "plate_thickness": plate_thickness,
+        "grid_spacing_x": grid_spacing_x, "grid_spacing_y": grid_spacing_y,
+        "rhs_size": rhs_size, "material": material,
+        "pressure_mpa": pressure_mpa, "point_loads": point_loads,
+        "bc_type": bc_type, "weld_type": weld_type, "weld_spacing": weld_spacing,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
+def run_fea_parametric(
+    base_config: dict,
+    variations: list[dict],
+) -> str:
+    """Run FEA across multiple configurations for comparison.
+
+    Args:
+        base_config: Base setup dict (plate_width, plate_height, etc.)
+        variations: List of override dicts per run
+    """
+    r = _executor.call("run_fea_parametric", {
+        "base_config": base_config, "variations": variations,
+    })
+    return _format_result(r)
+
+
+@mcp.tool()
 def undo() -> str:
     """Undo the last modeling operation."""
     r = _executor.call("undo", {})
