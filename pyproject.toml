@@ -7,7 +7,7 @@ name = "next3d"
 version = "0.1.0"
 description = "AI-native 3D CAD engine — 99 tools for creating, analyzing, and exporting parametric geometry via MCP"
 requires-python = ">=3.10"
-license = "MIT"
+license = {text = "MIT"}
 readme = "README.md"
 authors = [
     { name = "Rajesh Akkineni", email = "akkinenirajesh@gmail.com" },
